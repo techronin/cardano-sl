@@ -74,10 +74,12 @@ import           Pos.DHT.Real                (KademliaDHTInstance,
                                               KademliaDHTInstanceConfig (..),
                                               runKademliaDHT, startDHTInstance,
                                               stopDHTInstance)
+import           Pos.Genesis                 (genesisLeaders, genesisSeed)
 import           Pos.Launcher.Param          (BaseParams (..), LoggingParams (..),
                                               NodeParams (..))
 import           Pos.Lrc.Context             (LrcContext (..), LrcSyncData (..))
 import qualified Pos.Lrc.DB                  as LrcDB
+import           Pos.Lrc.Fts                 (followTheSatoshiM)
 import           Pos.Slotting                (SlottingVar, mkNtpSlottingVar,
                                               runNtpSlotting, runSlottingHolder)
 import           Pos.Ssc.Class               (SscConstraint, SscNodeContext, SscParams,
@@ -85,6 +87,8 @@ import           Pos.Ssc.Class               (SscConstraint, SscNodeContext, Ssc
 import           Pos.Ssc.Extra               (ignoreSscHolder, mkStateAndRunSscHolder)
 import           Pos.Statistics              (getNoStatsT, runStatsT')
 import           Pos.Txp                     (mkTxpLocalData, runTxpHolder)
+import           Pos.Txp.DB                  (genesisFakeTotalStake,
+                                              runBalanceIterBootstrap)
 #ifdef WITH_EXPLORER
 import           Pos.Explorer                (explorerTxpGlobalSettings)
 #else
@@ -98,7 +102,6 @@ import           Pos.Util.UserSecret         (usKeys)
 import           Pos.Worker                  (allWorkersCount)
 import           Pos.WorkMode                (MinWorkMode, ProductionMode, RawRealMode,
                                               ServiceMode, StatsMode)
-
 -- Remove this once there's no #ifdef-ed Pos.Txp import
 {-# ANN module ("HLint: ignore Use fewer imports" :: Text) #-}
 
@@ -293,6 +296,10 @@ runCH allWorkersNum params@NodeParams {..} sscNodeContext act = do
     ncShutdownNotifyQueue <- liftIO $ newTBQueueIO allWorkersNum
     ncStartTime <- liftIO Time.getCurrentTime
     ncLastKnownHeader <- liftIO $ newTVarIO Nothing
+    ncGenesisLeaders <- if Const.isDevelopment
+                        then pure $ genesisLeaders npCustomUtxo
+                        else runBalanceIterBootstrap $
+                             followTheSatoshiM genesisSeed genesisFakeTotalStake
     ucMemState <- newMemVar
     let ctx =
             NodeContext
@@ -357,7 +364,8 @@ bracketDHTInstance BaseParams {..} action = bracket acquire release action
     instConfig =
         KademliaDHTInstanceConfig
         { kdcKey = bpDHTKey
-        , kdcPort = snd bpIpPort
+        , kdcHost = maybe "0.0.0.0" fst bpBindAddress
+        , kdcPort = maybe 0 snd bpBindAddress
         , kdcInitialPeers = ordNub $ bpDHTPeers ++ Const.defaultPeers
         , kdcExplicitInitial = bpDHTExplicitInitial
         , kdcDumpPath = bpKademliaDump
@@ -365,16 +373,17 @@ bracketDHTInstance BaseParams {..} action = bracket acquire release action
 
 createTransport
     :: (MonadIO m, WithLogger m, Mockable Throw m)
-    => String -> Word16 -> m Transport
-createTransport ip port = do
+    => TCP.TCPAddr -> m Transport
+createTransport addrInfo = do
     let tcpParams =
             (TCP.defaultTCPParameters
              { TCP.transportConnectTimeout =
                    Just $ fromIntegral Const.networkConnectionTimeout
              , TCP.tcpNewQDisc = fairQDisc $ \_ -> return Nothing
+             , TCP.tcpCheckPeerHost = True
              })
     transportE <-
-        liftIO $ TCP.createTransport "0.0.0.0" (show port) ((,) ip) tcpParams
+        liftIO $ TCP.createTransport addrInfo tcpParams
     case transportE of
         Left e -> do
             logError $ sformat ("Error creating TCP transport: " % shown) e
@@ -384,10 +393,14 @@ createTransport ip port = do
 bracketTransport :: BaseParams -> (Transport -> Production a) -> Production a
 bracketTransport BaseParams {..} =
     bracket
-        (withLog $ createTransport (BS8.unpack $ fst bpIpPort) (snd bpIpPort))
+        (withLog $ createTransport (maybe TCP.Unaddressable TCP.Addressable addrInfo))
         (liftIO . closeTransport)
   where
     withLog = usingLoggerName $ lpRunnerTag bpLoggingParams
+    addrInfo = do
+        (host, port) <- bimap BS8.unpack show <$> bpBindAddress
+        let realPubHost = fromMaybe host bpPublicHost
+        pure $ TCP.TCPAddrInfo host port (realPubHost,)
 
 bracketResources :: BaseParams -> (RealModeResources -> Production a) -> IO a
 bracketResources bp action =
