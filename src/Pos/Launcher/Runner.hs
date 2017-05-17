@@ -366,6 +366,7 @@ bracketDHTInstance BaseParams {..} action = bracket acquire release action
         , kdcInitialPeers = ordNub $ bpDHTPeers ++ Const.defaultPeers
         , kdcExplicitInitial = bpDHTExplicitInitial
         , kdcDumpPath = bpKademliaDump
+        , kdcBehindNat = bpBehindNat
         }
 
 createTransport

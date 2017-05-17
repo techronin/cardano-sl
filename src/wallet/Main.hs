@@ -284,6 +284,7 @@ main = do
             , bpDHTKey             = Nothing
             , bpDHTExplicitInitial = CLI.dhtExplicitInitial woCommonArgs
             , bpKademliaDump       = "kademlia.dump"
+            , bpBehindNat          = woBehindNat
             }
     bracketResources baseParams $ \res -> do
         -- let timeSlaveParams =

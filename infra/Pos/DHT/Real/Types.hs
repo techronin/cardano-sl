@@ -68,6 +68,7 @@ data KademliaDHTInstanceConfig = KademliaDHTInstanceConfig
     , kdcInitialPeers    :: ![DHTNode]
     , kdcExplicitInitial :: !Bool
     , kdcDumpPath        :: !FilePath
+    , kdcBehindNat       :: !Bool
     } deriving (Show)
 
 -- | Node of /Kademlia DHT/ algorithm with access to 'KademliaDHTContext'.

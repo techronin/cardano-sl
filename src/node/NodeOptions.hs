@@ -57,6 +57,7 @@ data Args = Args
     , updateLatestPath          :: !FilePath
     , updateWithPackage         :: !Bool
     , monitorPort               :: !(Maybe Int)
+    , behindNat                 :: !Bool
     }
   deriving Show
 
@@ -169,7 +170,9 @@ argsParser = do
         long    "monitor-port" <>
         metavar "INT" <>
         help    "Run web monitor on this port"
-
+    behindNat <- switch $
+        long "behind-nat" <>
+        help "Whether to run DHT behind NAT"
     pure Args{..}
   where
     peerHelpMsg =

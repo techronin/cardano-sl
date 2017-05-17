@@ -35,6 +35,7 @@ data BaseParams = BaseParams
     , bpDHTExplicitInitial :: !Bool
     , bpLoggingParams      :: !LoggingParams          -- ^ Logger parameters
     , bpKademliaDump       :: !FilePath               -- ^ Path to kademlia dump file
+    , bpBehindNat          :: !Bool                   -- ^ Run DHT behind NAT
     } deriving (Show)
 
 -- | Contains algorithm specific & storage parameters for Node.

@@ -29,6 +29,7 @@ data WalletOptions = WalletOptions
     , woJLFile         :: !(Maybe FilePath)
     , woCommonArgs     :: !CLI.CommonArgs -- ^ Common CLI args, including initial DHT nodes
     , woAction         :: !WalletAction
+    , woBehindNat      :: !Bool
     }
 
 data WalletAction = Repl
@@ -94,6 +95,9 @@ optionsParser = do
         CLI.commonArgsParser "Initial DHT peer (may be many)"
     woAction <-
         actionParser
+    woBehindNat <- switch $
+        long "behind-nat" <>
+        help "Whether to run DHT behind NAT"
 
     pure WalletOptions{..}
 

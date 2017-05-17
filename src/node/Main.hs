@@ -72,6 +72,7 @@ baseParams loggingTag args@Args {..} = do
         , bpDHTKey = dhtKey
         , bpDHTExplicitInitial = CLI.dhtExplicitInitial commonArgs
         , bpKademliaDump = kademliaDumpPath
+        , bpBehindNat = behindNat
         }
 
 getNodeSystemStart :: (MonadIO m) => Timestamp -> m Timestamp

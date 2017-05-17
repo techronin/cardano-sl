@@ -82,10 +82,10 @@ startDHTInstance kconf@KademliaDHTInstanceConfig {..} = do
         if shouldRestore
         then do logInfo "Restoring DHT Instance from snapshot"
                 catchErrors $
-                    createKademliaFromSnapshot host kdcPort kademliaConfig =<<
+                    createKademliaFromSnapshot host kdcPort (K.Addressing kdcBehindNat) kademliaConfig =<<
                     decode <$> BS.readFile kdcDumpPath
         else do logInfo "Creating new DHT instance"
-                catchErrors $ createKademlia host kdcPort kdiKey kademliaConfig
+                catchErrors $ createKademlia host kdcPort kdiKey (K.Addressing kdcBehindNat) kademliaConfig
 
     logInfo "Created DHT instance"
     let kdiInitialPeers = kdcInitialPeers
@@ -99,10 +99,10 @@ startDHTInstance kconf@KademliaDHTInstanceConfig {..} = do
     catchErrors x = liftIO x `catchAll` catchErrorsHandler
 
     log' logF =  usingLoggerName ("kademlia" <> "messager") . logF . toText
-    createKademlia host port key cfg =
-        K.createL host (fromIntegral port) key cfg (log' logDebug) (log' logError)
-    createKademliaFromSnapshot host port cfg snapshot =
-        K.createLFromSnapshot host (fromIntegral port)
+    createKademlia host port key addr cfg =
+        K.createL host (fromIntegral port) key addr cfg (log' logDebug) (log' logError)
+    createKademliaFromSnapshot host port addr cfg snapshot =
+        K.createLFromSnapshot host (fromIntegral port) addr
             cfg snapshot (log' logDebug) (log' logError)
 
 rejoinNetwork
@@ -141,7 +141,7 @@ getKnownPeersImpl = do
     (inst, initialPeers, explicitInitial) <-
         KademliaDHT $
         (,,) <$> ask <*> asks kdiInitialPeers <*> asks kdiExplicitInitial
-    peers <- liftIO $ K.dumpPeers $ kdiHandle inst
+    peers <- map fst <$> liftIO (K.dumpPeers $ kdiHandle inst)
     let initPeers = bool [] initialPeers explicitInitial
     filter ((/= myId) . dhtNodeId) <$> extendPeers inst myId initPeers peers
   where
