@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 set -e
+set -x
 set -o pipefail
 
 # DESCRIPTION
@@ -56,6 +57,7 @@ wallet=true
 explorer=false
 no_code=false
 werror=false
+profiling=false
 
 if [ -e .no-nix ]; then
   no_nix=true
@@ -105,7 +107,7 @@ do
   # --no-wallet = don't build in wallet mode
   elif [[ $var == "--no-wallet" ]]; then
     wallet=false
-  # disabling --fast
+  # enabling explorer
   elif [[ $var == "--explorer" ]]; then
     explorer=true
   # disabling --fast
@@ -119,10 +121,13 @@ do
     spec_prj="godtossing"
   elif [[ " $projects " =~ " $var " ]]; then
     spec_prj=$var
+  elif [[ $var == "--profiling" ]]; then
+    profiling=true
   # otherwise pass the arg to stack
   else
     args="$args $var"
   fi
+  
 done
 
 if [[ $prodModesCounter -gt 1 ]]; then
@@ -179,6 +184,12 @@ if [[ $ram == true ]];
   else ghc_opts="$ghc_opts +RTS -A256m -n2m -RTS"
 fi
 
+prof_opts=""
+if [[ $profiling == true ]]; then
+  ghc_opts="$ghc_opts -fprof-auto -caf-all -rtsopts" 
+  prof_opts="--executable-profiling --library-profiling"
+fi
+
 xperl='$|++; s/(.*) Compiling\s([^\s]+)\s+\(\s+([^\/]+).*/\1 \2/p'
 xgrep="((^.*warning.*$|^.*error.*$|^    .*$|^.*can't find source.*$|^Module imports form a cycle.*$|^  which imports.*$)|^)"
 
@@ -208,26 +219,29 @@ echo "Going to build: $to_build"
 
 for prj in $to_build; do
   echo "Building $prj"
+#  stack build                               \
+#      --ghc-options="$ghc_opts"             \
+#      $commonargs $norun                    \
+#      --dependencies-only                   \
+#      $prof_opts                            \
+#      $args                                 \
+#      $prj
+#  if [[ $no_code == true ]]; then
+#    ghc_opts_2="$ghc_opts -fwrite-interface -fno-code"
+#  else
+#    ghc_opts_2="$ghc_opts"
+#  fi
   stack build                               \
       --ghc-options="$ghc_opts"             \
       $commonargs $norun                    \
-      --dependencies-only                   \
-      $args                                 \
-      $prj
-  if [[ $no_code == true ]]; then
-    ghc_opts_2="$ghc_opts -fwrite-interface -fno-code"
-  else
-    ghc_opts_2="$ghc_opts"
-  fi
-  stack build                               \
-      --ghc-options="$ghc_opts_2"           \
-      $commonargs $norun                    \
       $fast                                 \
+      $prof_opts                            \
       $args                                 \
       $prj                                  \
       2>&1                                  \
     | perl -pe "$xperl"                     \
     | { grep -E --color "$xgrep" || true; }
+  echo "Building thing done"
 done
 
 if [[ $test == true ]]; then
@@ -236,6 +250,7 @@ if [[ $test == true ]]; then
       $commonargs                           \
       --no-run-benchmarks                   \
       $fast                                 \
+      $prof_opts                            \
       $args                                 \
       cardano-sl
 fi

@@ -3,8 +3,8 @@
 stack exec -- cardano-node \
     --system-start 1498743070 \
     --log-config log-config-prod.yaml \
-    --logs-prefix "logs/qanet" \
-    --db-path db-qanet \
+    --logs-prefix "logs/tns" \
+    --db-path db-tns \
     --kademlia-peer cardano-node-0.aws.iohkdev.io:3000 \
     --kademlia-peer cardano-node-1.aws.iohkdev.io:3000 \
     --kademlia-peer cardano-node-2.aws.iohkdev.io:3000 \
@@ -20,6 +20,7 @@ stack exec -- cardano-node \
     --kademlia-peer cardano-node-12.aws.iohkdev.io:3000 \
     --kademlia-peer cardano-node-13.aws.iohkdev.io:3000 \
     --wallet \
-    --wallet-db-path wdb-qanet \
+    --wallet-db-path wdb-tns \
     --static-peers \
+#    +RTS -p -xt -hy -RTS \
     $@
