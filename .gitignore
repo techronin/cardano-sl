@@ -9,6 +9,7 @@ cabal-dev
 *.prof
 *.aux
 *.hp
+*.ps
 *.tix
 .virtualenv
 .hsenv
