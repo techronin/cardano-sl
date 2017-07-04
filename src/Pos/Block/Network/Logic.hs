@@ -55,7 +55,8 @@ import           Pos.Communication.Protocol (Conversation (..), ConversationActi
                                              NodeId, OutSpecs, SendActions (..), convH,
                                              toOutSpecs)
 import           Pos.Context                (BlockRetrievalQueueTag, LastKnownHeaderTag,
-                                             RecoveryHeaderTag, recoveryInProgress)
+                                             RecoveryHeaderTag, recoveryCommGuard,
+                                             recoveryInProgress)
 import           Pos.Core                   (HasHeaderHash (..), HeaderHash, difficultyL,
                                              gbHeader, headerHashG, prevBlockL)
 import           Pos.Crypto                 (shortHashF)
@@ -108,7 +109,7 @@ instance Exception BlockNetLogicException where
 triggerRecovery :: forall ssc m.
     (SscWorkersClass ssc, WorkMode ssc m)
     => SendActions m -> m ()
-triggerRecovery sendActions = unlessM recoveryInProgress $ do
+triggerRecovery sendActions = recoveryCommGuard $ do
     logDebug "Recovery started, requesting tips from neighbors"
     reifyMsgLimit (Proxy @(MsgHeaders ssc)) $ \limitProxy -> do
         converseToNeighbors sendActions (pure . Conversation . requestTip limitProxy) `catch`
@@ -330,6 +331,7 @@ addHeaderToBlockRequestQueue
     -> Bool -- Continues?
     -> m ()
 addHeaderToBlockRequestQueue nodeId header continues = do
+    logDebug $ sformat ("addToBlockRequestQueue, : "%build) header
     queue <- Ether.ask @BlockRetrievalQueueTag
     recHeaderVar <- Ether.ask @RecoveryHeaderTag
     lastKnownH <- Ether.ask @LastKnownHeaderTag
@@ -376,7 +378,6 @@ updateRecoveryHeader nodeId recHeaderVar lastKnownH recoveryTip = do
              when (recoveryTip `isMoreDifficult` curRecHeader) replace
   where
     a `isMoreDifficult` b = a ^. difficultyL > b ^. difficultyL
-
 
 ----------------------------------------------------------------------------
 -- Handling blocks
@@ -465,7 +466,9 @@ applyWithoutRollback sendActions blocks = do
     applyWithoutRollbackDo
         :: HeaderHash -> m (Either Text HeaderHash, HeaderHash)
     applyWithoutRollbackDo curTip = do
+        logInfo "Verifying apnd applying blocks..."
         res <- verifyAndApplyBlocks False blocks
+        logInfo "Verifying apnd applying blocks done"
         let newTip = either (const curTip) identity res
         pure (res, newTip)
 
@@ -504,7 +507,7 @@ applyWithRollback nodeId sendActions toApply lca toRollback = do
         ". Blocks rolled back: "%listJson%
         ", blocks applied: "%listJson
     reportRollback =
-        unlessM recoveryInProgress $ do
+        recoveryCommGuard $ do
             logDebug "Reporting rollback happened"
             reportMisbehaviourSilent version $
                 sformat reportF nodeId toRollbackHashes toApplyHashes
