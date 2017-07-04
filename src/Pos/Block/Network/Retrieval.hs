@@ -27,11 +27,11 @@ import           Pos.Binary.Communication   ()
 import           Pos.Block.Core             (Block, BlockHeader, blockHeader)
 import           Pos.Block.Logic            (ClassifyHeaderRes (..),
                                              ClassifyHeadersRes (..), classifyHeaders,
-                                             classifyNewHeader, needRecovery)
+                                             classifyNewHeader)
 import           Pos.Block.Network.Announce (announceBlockOuts)
-import           Pos.Block.Network.Logic    (handleBlocks, mkBlocksRequest,
-                                             mkHeadersRequest, requestHeaders,
-                                             triggerRecovery)
+import           Pos.Block.Network.Logic    (BlockNetLogicException (..), handleBlocks,
+                                             mkBlocksRequest, mkHeadersRequest,
+                                             requestHeaders, triggerRecovery)
 import           Pos.Block.Network.Types    (MsgBlock (..), MsgGetBlocks (..),
                                              MsgHeaders (..))
 import           Pos.Block.RetrievalQueue   (BlockRetrievalTask (..))
@@ -87,14 +87,11 @@ retrievalWorkerImpl sendActions =
     mainLoop = runIfNotShutdown $ reportingFatal version $ do
         queue        <- Ether.ask @BlockRetrievalQueueTag
         recHeaderVar <- Ether.ask @RecoveryHeaderTag
-        needRecovery_ <- needRecovery @ssc
         -- Here we decide what we'll actually do next
         logDebug "Waiting on the block queue or recovery header var"
         thingToDoNext <- atomically $ do
             mbQueuedHeadersChunk <- tryReadTBQueue queue
-            mbRecHeader <- if needRecovery_
-                               then tryReadTMVar recHeaderVar
-                               else pure Nothing
+            mbRecHeader <- tryReadTMVar recHeaderVar
             case (mbQueuedHeadersChunk, mbRecHeader) of
                 (Nothing, Nothing) -> retry
                 (Just (nodeId, task), _) ->
@@ -117,10 +114,14 @@ retrievalWorkerImpl sendActions =
         workerHandle sendActions nodeId (one header)
     handleAlternative nodeId header = do
         mghM <- mkHeadersRequest (headerHash header)
-        whenJust mghM $ \mgh ->
-            reifyMsgLimit (Proxy @(MsgHeaders ssc)) $ \limPx ->
-            withConnectionTo sendActions nodeId $ \_ -> pure $ Conversation $
-                requestHeaders (workerHandle sendActions nodeId) mgh nodeId limPx
+        let onNothing =
+                throwM $ BlockNetLogicInternal $
+                "handleAlternative: we don't need to make request"
+        let onJust mgh =
+                reifyMsgLimit (Proxy @(MsgHeaders ssc)) $ \limPx ->
+                withConnectionTo sendActions nodeId $ \_ -> pure $ Conversation $
+                    requestHeaders (workerHandle sendActions nodeId) mgh nodeId limPx
+        maybe onNothing onJust mghM
     handleBlockRetrievalE nodeId header e = do
         logWarning $ sformat
             ("Error handling nodeId="%build%", header="%build%": "%shown)

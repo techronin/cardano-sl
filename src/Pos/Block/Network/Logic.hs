@@ -6,7 +6,8 @@
 -- loop logic.
 module Pos.Block.Network.Logic
        (
-         triggerRecovery
+         BlockNetLogicException (..)
+       , triggerRecovery
        , requestTipOuts
        , requestTip
 
@@ -83,6 +84,8 @@ data BlockNetLogicException
     | DialogUnexpected Text
       -- ^ Node's response in any network/block related logic was
       -- unexpected.
+    | BlockNetLogicInternal Text
+      -- ^ Shouldn't happen.
     deriving (Show)
 
 instance B.Buildable BlockNetLogicException where
@@ -302,16 +305,22 @@ handleRequestedHeaders cont headers = do
                                         (getNewestFirst headers)
             logDebug $ sformat validFormat (headerHash lcaChild)newestHash
             case nonEmpty headers' of
-                Nothing -> logWarning $
-                    "handleRequestedHeaders: couldn't find LCA child " <>
-                    "within headers returned, most probably classifyHeaders is broken"
+                Nothing ->
+                    throwM $ BlockNetLogicInternal $
+                        "handleRequestedHeaders: couldn't find LCA child " <>
+                        "within headers returned, most probably classifyHeaders is broken"
                 Just headersPostfix ->
                     cont (NewestFirst headersPostfix)
-        CHsUseless reason ->
-            logDebug $ sformat uselessFormat oldestHash newestHash reason
+        CHsUseless reason -> do
+            let msg = sformat invalidFormat oldestHash newestHash reason
+            logDebug msg
+            -- It's weird to have useless headers in recovery mode.
+            ifM recoveryInProgress $ throwM $ DialogUnexpected msg
         CHsInvalid reason ->
              -- TODO: ban node for sending invalid block.
-            logDebug $ sformat invalidFormat oldestHash newestHash reason
+            let msg = sformat invalidFormat oldestHash newestHash reason
+            logDebug msg
+            throwM $ DialogUnexpected msg
   where
     validFormat =
         "Received valid headers, can request blocks from " %shortHashF % " to " %shortHashF

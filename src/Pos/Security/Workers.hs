@@ -108,7 +108,7 @@ checkForReceivedBlocksWorkerImpl
        (SscWorkersClass ssc, WorkMode ssc m)
     => SendActions m -> m ()
 checkForReceivedBlocksWorkerImpl sendActions = afterDelay $ do
-    repeatOnInterval (const (sec' 4)) . reportingFatal version $
+    repeatOnInterval (const (sec' 4)) . reportingFatal version . recoveryCommGuard $
         whenM (needRecovery @ssc) $ triggerRecovery sendActions
     repeatOnInterval (min (sec' 20)) . reportingFatal version . recoveryCommGuard $ do
         ourPk <- getOurPublicKey
