@@ -4,6 +4,9 @@ module Test.Pos.Ssc.GodTossing.SeedSpec
        ( spec
        ) where
 
+import           Universum
+import           Unsafe                   ()
+
 import           Control.Lens             (each)
 import           Crypto.Random            (MonadRandom)
 import qualified Data.HashMap.Strict      as HM
@@ -16,20 +19,19 @@ import           Test.Hspec.QuickCheck    (modifyMaxSize, modifyMaxSuccess, prop
 import           Test.QuickCheck          (Property, choose, counterexample, generate,
                                            ioProperty, property, sized, (===))
 import           Test.QuickCheck.Property (failed, succeeded)
-import           Universum
-import           Unsafe                   ()
 
-import           Pos.Binary               (AsBinaryClass (..))
+import           Pos.Binary               (AsBinary, AsBinaryClass (..))
 import           Pos.Core.Address         (AddressHash, addressHash)
-import           Pos.Crypto               (PublicKey, SecretKey, Share,
+import           Pos.Crypto               (DecShare, PublicKey, SecretKey,
                                            SignTag (SignCommitment), Threshold,
-                                           VssKeyPair, decryptShare, sign, toPublic,
-                                           toVssPublicKey)
+                                           VssKeyPair, VssPublicKey, decryptShare, sign,
+                                           toPublic, toVssPublicKey)
 import           Pos.Ssc.GodTossing       (Commitment (..), CommitmentsMap, Opening (..),
                                            SeedError (..), calculateSeed,
                                            genCommitmentAndOpening, getCommitmentsMap,
-                                           mkCommitmentsMap, secretToSharedSeed)
-import           Pos.Types                (SharedSeed (..), mkCoin)
+                                           mkCommitmentsMap, secretToSharedSeed,
+                                           vssThreshold)
+import           Pos.Types                (SharedSeed (..), StakeholderId, mkCoin)
 import           Pos.Util                 (nonrepeating, sublistN)
 
 getPubAddr :: SecretKey -> AddressHash PublicKey
@@ -43,15 +45,15 @@ spec = do
     describe "calculateSeed" $ smaller $ do
         prop
             "finds the seed when all openings are present" $
-            do n <- sized $ \size -> choose (1, max size 1)
+            do n <- sized $ \size -> choose (4, max size 4)
                return $ recoverSecretsProp n n 0 0
         prop
             "finds the seed when all shares are present" $
-            do n <- sized $ \size -> choose (1, max size 1)
+            do n <- sized $ \size -> choose (4, max size 4)
                return $ recoverSecretsProp n 0 n 0
         prop
             "finds the seed when all secrets can be recovered" $
-            do n <- sized $ \size -> choose (1, max size 1)
+            do n <- sized $ \size -> choose (4, max size 4)
                n_overlap <- choose (0, n)
                n_openings <- choose (n_overlap, n)
                let n_shares = n - n_openings + n_overlap
@@ -59,7 +61,7 @@ spec = do
         -- [CSL-50]: we are in process of thinking about this property
         -- prop
         --     "fails to find the seed when some secrets can't be recovered" $
-        --     do n <- sized $ \size -> choose (1, max size 1)
+        --     do n <- sized $ \size -> choose (4, max size 1)
         --        n_overlap <- choose (0, n-1)
         --        n_openings <- choose (n_overlap, n-1)
         --        n_shares <- choose (n_overlap, n - n_openings + n_overlap - 1)
@@ -91,18 +93,25 @@ recoverSecretsProp
     -> Int         -- ^ How many have sent both (the “overlap” parameter)
     -> Property
 recoverSecretsProp n n_openings n_shares n_overlap
-    | any (< 0) [n, n_openings, n_shares, n_overlap] = error "negative"
-    | n == 0                 = error "n == 0"
-    | n_overlap > n_openings = error "n_overlap > n_openings"
-    | n_overlap > n_shares   = error "n_overlap > n_shares"
-    | n_openings > n         = error "n_openings > n"
-    | n_shares > n           = error "n_shares > n"
+    | any (< 0) [n, n_openings, n_shares, n_overlap] =
+          error "recoverSecretsProp: negative"
+    | n < 4 =
+          error "recoverSecretsProp: n < 4"
+    | n_overlap > n_openings =
+          error "recoverSecretsProp: n_overlap > n_openings"
+    | n_overlap > n_shares =
+          error "recoverSecretsProp: n_overlap > n_shares"
+    | n_openings > n =
+          error "recoverSecretsProp: n_openings > n"
+    | n_shares > n =
+          error "recoverSecretsProp: n_shares > n"
     -- there's a lower bound for the overlap, too (e.g. n=3,
     -- openings=2, shares=2, then overlap must be at least 1)
-    | n - n_openings - n_shares + n_overlap < 0 = error "overlap condition"
+    | n - n_openings - n_shares + n_overlap < 0 =
+          error "recoverSecretsProp: overlap condition"
 
 recoverSecretsProp n n_openings n_shares n_overlap = ioProperty $ do
-    let threshold = pickThreshold n
+    let threshold = vssThreshold n
     (keys, vssKeys, comms, opens) <- generateKeysAndMpc threshold n
     let des = fromBinary
         seeds :: [SharedSeed]
@@ -118,13 +127,14 @@ recoverSecretsProp n n_openings n_shares n_overlap = ioProperty $ do
         (haveSentBoth ++) <$>
         sublistN (n_shares - n_overlap) (keys \\ haveSentOpening)
     let commitmentsMap = mkCommitmentsMap' keys comms
+    let vssMap = mkVssMap keys vssKeys
     let richmen = getCommitmentsMap commitmentsMap & each .~ mkCoin 1000
     let openingsMap = HM.fromList
             [(getPubAddr k, o)
               | (k, o) <- zip keys opens
               , k `elem` haveSentOpening]
     -- @generatedShares ! X@ = shares that X generated and sent to others
-    -- generatedShares :: HashMap PublicKey (HashMap PublicKey Share)
+    -- generatedShares :: HashMap PublicKey (HashMap PublicKey DecShare)
     generatedShares <- do
         let sentShares (kp, _) = kp `elem` haveSentShares
         fmap HM.fromList $ forM (filter sentShares (zip keys comms)) $
@@ -135,7 +145,7 @@ recoverSecretsProp n n_openings n_shares n_overlap = ioProperty $ do
     -- @sharesMap ! X@ = shares that X received from others
     let sharesMap = HM.fromList $ do
              addr <- getPubAddr <$> keys
-             let ser = asBinary @Share
+             let ser = asBinary @DecShare
                  receivedShares = HM.fromList $ do
                      (sender, senderShares) <- HM.toList generatedShares
                      case HM.lookup addr senderShares of
@@ -144,7 +154,9 @@ recoverSecretsProp n n_openings n_shares n_overlap = ioProperty $ do
              return (addr, receivedShares)
 
     let shouldSucceed = n_openings + n_shares - n_overlap >= n
-    let result = calculateSeed commitmentsMap openingsMap sharesMap richmen
+    let result = calculateSeed commitmentsMap vssMap
+                               openingsMap sharesMap
+                               richmen
     let debugInfo = sformat ("n = "%int%", n_openings = "%int%", "%
                              "n_shares = "%int%", n_overlap = "%int%
                              "\n"%
@@ -208,9 +220,17 @@ mkCommitmentsMap' keys comms =
         let sig = sign SignCommitment sk (epochIdx, comm)
         return (toPublic sk, comm, sig)
 
+mkVssMap :: [SecretKey]
+         -> NonEmpty VssKeyPair
+         -> HashMap StakeholderId (AsBinary VssPublicKey)
+mkVssMap keys vssKeys =
+    HM.fromList $
+        zip (map getPubAddr keys)
+            (map (asBinary . toVssPublicKey) (toList vssKeys))
+
 getDecryptedShares
     :: MonadRandom m
-    => NonEmpty VssKeyPair -> Commitment -> m [[Share]]
+    => NonEmpty VssKeyPair -> Commitment -> m [[DecShare]]
 getDecryptedShares vssKeys comm =
     forM (HM.toList (commShares comm)) $
         \(pubKey, traverse fromBinary -> encShare) -> do
@@ -224,6 +244,3 @@ getDecryptedShares vssKeys comm =
                     _          -> error $
                         "@getDecryptedShares: could not deserialize LEncShare"
             toList <$> mapM (decryptShare secKey) encShare'
-
-pickThreshold :: Int -> Threshold
-pickThreshold n = fromIntegral (n `div` 2 + n `mod` 2)

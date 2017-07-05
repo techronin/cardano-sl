@@ -21,12 +21,10 @@ import           Pos.Ssc.GodTossing.Core.Types (Commitment (..), Commitment (..)
 instance Bi Commitment where
     sizeNPut = labelS "Commitment" $
            putField commShares
-        <> putField commExtra
         <> putField commProof
     get = label "Commitment" $ do
         commShares <- get
         when (null commShares) $ fail "get@Commitment: no shares"
-        commExtra <- get
         commProof <- get
         return Commitment {..}
 

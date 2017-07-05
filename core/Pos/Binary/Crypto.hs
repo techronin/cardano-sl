@@ -12,6 +12,7 @@ import qualified Cardano.Crypto.Wallet      as CC
 import qualified Crypto.ECC.Edwards25519    as Ed25519
 import           Crypto.Hash                (digestFromByteString)
 import qualified Crypto.PVSS                as Pvss
+import qualified Crypto.SCRAPE              as Scrape
 import qualified Crypto.Sign.Ed25519        as EdStandard
 import qualified Data.Binary                as Binary
 import qualified Data.ByteArray             as ByteArray
@@ -24,10 +25,12 @@ import qualified Data.Store.TH              as Store
 import           Formatting                 (int, sformat, stext, (%))
 
 import           Pos.Binary.Class           (AsBinary (..), Bi (..), Size (..),
-                                             StaticSize (..), getBytes, getCopyBi, label,
-                                             labelP, labelS, putBytes, putCopyBi,
-                                             putField, sizeOf)
+                                             StaticSize (..), getBytes, getCopyBi,
+                                             getSize, label, labelP, labelS, putBytes,
+                                             putCopyBi, putField, sizeOf)
 import qualified Pos.Binary.Class           as Bi
+import           Pos.Binary.Size            (ExactSize (..), ExactSized, exactSize,
+                                             exactSize')
 import           Pos.Crypto.Hashing         (AbstractHash (..), HashAlgorithm,
                                              WithHash (..), hashDigestSize',
                                              reifyHashDigestSize, withHash)
@@ -35,9 +38,7 @@ import           Pos.Crypto.HD              (HDAddressPayload (..))
 import           Pos.Crypto.RedeemSigning   (RedeemPublicKey (..), RedeemSecretKey (..),
                                              RedeemSignature (..))
 import           Pos.Crypto.SafeSigning     (EncryptedSecretKey (..), PassPhrase)
-import           Pos.Crypto.SecretSharing   (EncShare (..), Secret (..), SecretProof (..),
-                                             SecretSharingExtra (..), Share (..),
-                                             VssKeyPair (..), VssPublicKey (..))
+import qualified Pos.Crypto.SecretSharing   as C
 import           Pos.Crypto.Signing         (ProxyCert (..), ProxySecretKey (..),
                                              ProxySignature (..), PublicKey (..),
                                              SecretKey (..), Signature (..), Signed (..))
@@ -71,6 +72,9 @@ instance HashAlgorithm algo => Bi (AbstractHash algo a) where
                 Nothing -> error "AbstractHash.peek: impossible"
                 Just x  -> pure (AbstractHash x))
 
+instance HashAlgorithm algo => ExactSized (AbstractHash algo a) where
+    exactSize = ExactSize (hashDigestSize' @algo)
+
 ----------------------------------------------------------------------------
 -- SecretSharing
 ----------------------------------------------------------------------------
@@ -87,52 +91,94 @@ constantSizedBinaryToStoreGet bytes = do
 
 -- [CSL-1122] TODO: more efficient 'put' and 'get' are possible if 'Store'
 -- instances are added into pvss-haskell
-#define BiPvss(T, PT, BYTES) \
-  instance Bi T where {\
-    size = ConstSize BYTES ;\
-    put = labelP "T" . putBytes . BSL.toStrict . Binary.encode ;\
-    get = label "T" $ constantSizedBinaryToStoreGet BYTES };\
+#define StorePvss(T) \
+  instance Store.Store T where {\
+    size = ConstSize (exactSize' @T) ;\
+    poke = labelP "T" . putBytes . BSL.toStrict . Binary.encode ;\
+    peek = label "T" $ constantSizedBinaryToStoreGet (exactSize' @T) };\
+
+#define BiPvss(T, PT) \
+  StorePvss(T) \
+  instance Bi T where { \
+    size = Store.size ;\
+    put  = Store.poke ;\
+    get  = Store.peek };\
   deriving instance Bi PT ;\
+  instance ExactSized PT where exactSize = PT <$> exactSize ;\
 
-BiPvss (Pvss.PublicKey, VssPublicKey, 33)    -- yes it's 33 and not 32
-BiPvss (Pvss.KeyPair, VssKeyPair, 65)        -- 32+33
-BiPvss (Pvss.Secret, Secret, 33)
-BiPvss (Pvss.DecryptedShare, Share, 101)     -- 4+33+64
-BiPvss (Pvss.EncryptedShare, EncShare, 101)
-BiPvss (Pvss.Proof, SecretProof, 64)
+-- These instances have to be believed
+instance ExactSized Scrape.Point where
+    exactSize = 33       -- not 32!
+instance ExactSized Scrape.Scalar where
+    exactSize = 32
+instance ExactSized Scrape.Proof where
+    exactSize = ExactSize $
+        32 {- exactSize @Challenge -} +
+        exactSize' @Scrape.Scalar
 
-instance Store.Store Pvss.ExtraGen where
-    size = ConstSize 33
-    poke = labelP "Pvss.ExtraGen" . putBytes . BSL.toStrict . Binary.encode
-    peek = label "Pvss.ExtraGen" $ constantSizedBinaryToStoreGet 33
-instance Store.Store Pvss.Commitment where
-    size = ConstSize 33
-    poke = labelP "Pvss.Commitment" . putBytes . BSL.toStrict . Binary.encode
-    peek = label "Pvss.Commitment" $ constantSizedBinaryToStoreGet 33
+-- This instances are correct by construction
+instance ExactSized Pvss.PublicKey where
+    exactSize = Pvss.PublicKey <$> exactSize
+instance ExactSized Pvss.PrivateKey where
+    exactSize = Pvss.PrivateKey <$> exactSize
+instance ExactSized Pvss.KeyPair where
+    exactSize = Pvss.KeyPair <$> exactSize <*> exactSize
+instance ExactSized Scrape.DecryptedShare where
+    exactSize = Scrape.DecryptedShare <$> exactSize <*> exactSize
+instance ExactSized Scrape.EncryptedSi where
+    exactSize = Scrape.EncryptedSi <$> exactSize
+instance ExactSized Scrape.Secret where
+    exactSize = Scrape.Secret <$> exactSize
+instance ExactSized Scrape.ExtraGen where
+    exactSize = Scrape.ExtraGen <$> exactSize
+instance ExactSized Scrape.Commitment where
+    exactSize = Scrape.Commitment <$> exactSize
 
-Store.makeStore ''SecretSharingExtra
-instance Bi SecretSharingExtra where
-    put = labelP "SecretSharingExtra" . Store.poke
-    get = label "SecretSharingExtra" $ Store.peek
+BiPvss (Pvss.PublicKey, C.VssPublicKey)
+BiPvss (Pvss.KeyPair, C.VssKeyPair)
+BiPvss (Scrape.Secret, C.Secret)
+BiPvss (Scrape.DecryptedShare, C.DecShare)
+BiPvss (Scrape.EncryptedSi, C.EncShare)
+
+StorePvss(Scrape.Proof)
+StorePvss(Scrape.ExtraGen)
+StorePvss(Scrape.Commitment)
+
+-- TODO: less optimal than it could be (because it writes the length even
+-- though technically it doesn't have to)
+instance Store.Store Scrape.ParallelProofs where
+  size = VarSize (getSize . Binary.encode)
+  poke = labelP "ParallelProofs" . put . Binary.encode
+  peek = label "ParallelProofs" $ do
+      bs <- get
+      case Binary.decodeOrFail bs of
+          Left (_, _, s)   -> fail s
+          Right ("", _, a) -> pure a
+          Right (x, _, _)  -> fail (show (BSL.length x) <> " unconsumed bytes")
+
+Store.makeStore ''C.SecretProof
+instance Bi C.SecretProof where
+    put = labelP "SecretProof" . Store.poke
+    get = label "SecretProof" $ Store.peek
     size = Store.size
 
-deriving instance Bi (AsBinary SecretSharingExtra)
+deriving instance Bi (AsBinary C.SecretProof)
 
 ----------------------------------------------------------------------------
 -- SecretSharing AsBinary
 ----------------------------------------------------------------------------
 
-#define BiMacro(B, BYTES) \
+#define BiMacro(B) \
   instance Bi (AsBinary B) where {\
-    size = ConstSize BYTES ;\
+    size = ConstSize (exactSize' @B) ;\
     put (AsBinary bs) = putBytes bs ;\
-    get = label "B (BYTES bytes)" $ AsBinary <$> getBytes BYTES}; \
+    get = label "B" $ \
+              AsBinary <$> getBytes (exactSize' @B)}; \
 
-BiMacro(VssPublicKey, 33)
-BiMacro(Secret, 33)
-BiMacro(Share, 101) --4+33+64
-BiMacro(EncShare, 101)
-BiMacro(SecretProof, 64)
+BiMacro(C.VssPublicKey)
+BiMacro(C.Secret)
+BiMacro(C.DecShare)
+BiMacro(C.EncShare)
 
 ----------------------------------------------------------------------------
 -- Signing
@@ -146,6 +192,22 @@ encryptedKeyLength = 96
 signatureLength = 64
 chainCodeLength = 32
 passphraseLength = 32
+
+instance ExactSized Ed25519.PointCompressed where
+    exactSize = ExactSize publicKeyLength
+instance ExactSized Ed25519.Scalar where
+    exactSize = ExactSize secretKeyLength
+instance ExactSized Ed25519.Signature where
+    exactSize = ExactSize signatureLength
+
+instance ExactSized CC.ChainCode where
+    exactSize = ExactSize chainCodeLength
+instance ExactSized CC.XPub where
+    exactSize = ExactSize (publicKeyLength + chainCodeLength)
+instance ExactSized CC.XPrv where
+    exactSize = ExactSize encryptedKeyLength
+instance ExactSized CC.XSignature where
+    exactSize = ExactSize signatureLength
 
 putAssertLength :: Monad m => Text -> Int -> ByteString -> m ()
 putAssertLength typeName expectedLength bs =
@@ -215,6 +277,10 @@ instance Bi CC.XSignature where
 deriving instance Bi (Signature a)
 deriving instance Bi PublicKey
 deriving instance Bi SecretKey
+
+deriving instance ExactSized (Signature a)
+deriving instance ExactSized PublicKey
+deriving instance ExactSized SecretKey
 
 instance Bi EncryptedSecretKey where
     size = Bi.combineSize (eskPayload, eskHash)

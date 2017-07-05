@@ -14,6 +14,7 @@ module Pos.Ssc.GodTossing.Arbitrary
 import           Universum
 
 import qualified Data.HashMap.Strict              as HM
+import qualified Data.List.NonEmpty               as NE
 import           Test.QuickCheck                  (Arbitrary (..), Gen, choose, elements,
                                                    listOf, oneof)
 
@@ -59,10 +60,10 @@ newtype BadCommitment = BadComm
 
 instance Arbitrary BadCommitment where
     arbitrary = BadComm <$> do
-      Commitment <$> arbitrary <*> arbitrary <*> arbitrary
+      Commitment <$> arbitrary <*> arbitrary
 
--- | Wrapper over 'SignedCommitment'. Creates an invalid SignedCommitment w.r.t.
--- 'verifyCommitmentSignature'.
+-- | Wrapper over 'SignedCommitment'. Creates an invalid SignedCommitment
+-- w.r.t. 'verifyCommitmentSignature'.
 newtype BadSignedCommitment = BadSignedComm
     { getBadSignedC :: SignedCommitment
     } deriving (Show, Eq)
@@ -98,7 +99,7 @@ commitmentsAndOpenings :: [CommitmentOpening]
 commitmentsAndOpenings =
     map (uncurry CommitmentOpening) $
     unsafeMakePool "[generating Commitments and Openings for tests...]" 50 $
-       genCommitmentAndOpening 1 (one (asBinary vssPk))
+       genCommitmentAndOpening 3 (NE.fromList (replicate 5 (asBinary vssPk)))
   where
     vssPk = toVssPublicKey $ deterministicVssKeyGen "ababahalamaha"
 {-# NOINLINE commitmentsAndOpenings #-}

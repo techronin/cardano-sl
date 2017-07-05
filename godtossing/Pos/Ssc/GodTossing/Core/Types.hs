@@ -24,6 +24,7 @@ module Pos.Ssc.GodTossing.Core.Types
          -- * Vss certificates
        , VssCertificate (vcVssKey, vcExpiryEpoch, vcSignature, vcSigningKey)
        , mkVssCertificate
+       , unsafeMkVssCertificate
        , recreateVssCertificate
        , getCertId
        , VssCertificatesMap
@@ -37,6 +38,7 @@ module Pos.Ssc.GodTossing.Core.Types
        , NodeSet
        ) where
 
+import           Data.HashMap.Strict (HashMap)
 import qualified Data.HashMap.Strict as HM
 import qualified Data.Text.Buildable
 import           Formatting          (bprint, build, int, (%))
@@ -46,10 +48,9 @@ import           Pos.Binary.Class    (AsBinary (..))
 import           Pos.Binary.Core     ()
 import           Pos.Core.Address    (addressHash)
 import           Pos.Core.Types      (EpochIndex, StakeholderId)
-import           Pos.Crypto          (EncShare, Hash, PublicKey, Secret, SecretKey,
-                                      SecretProof, SecretSharingExtra, Share,
-                                      SignTag (SignVssCert), Signature, VssPublicKey,
-                                      checkSig, sign, toPublic)
+import           Pos.Crypto          (DecShare, EncShare, Hash, PublicKey, Secret,
+                                      SecretKey, SecretProof, SignTag (SignVssCert),
+                                      Signature, VssPublicKey, checkSig, sign, toPublic)
 
 type NodeSet = HashSet StakeholderId
 
@@ -57,13 +58,19 @@ type NodeSet = HashSet StakeholderId
 -- Commitments
 ----------------------------------------------------------------------------
 
--- | Commitment is a message generated during the first stage of
--- GodTossing. It contains encrypted shares and proof of secret.
--- Invariant which must be ensured: commShares is not empty.
+-- | Commitment is a message generated during the first stage of GodTossing.
+-- It contains encrypted shares and proof of secret.
+--
+-- There can be more than one share generated for a single participant.
+--
+-- Note: we have to use the same order of shares when *producing* a
+-- commitment and when *checking* the commitment. This order is dictated by
+-- the 'Ord' instance of 'VssPublicKey' and doesn't correspond to the order
+-- which @HM.toList commShares@ will produce.
 data Commitment = Commitment
-    { commExtra  :: !(AsBinary SecretSharingExtra)
-    , commProof  :: !(AsBinary SecretProof)
-    , commShares :: !(HashMap (AsBinary VssPublicKey) (NonEmpty (AsBinary EncShare)))
+    { commProof  :: !(AsBinary SecretProof)
+    , commShares :: !(HashMap (AsBinary VssPublicKey)
+                              (NonEmpty (AsBinary EncShare)))
     } deriving (Show, Eq, Generic)
 
 instance NFData Commitment
@@ -112,18 +119,34 @@ type OpeningsMap = HashMap StakeholderId Opening
 -- | Each node generates several 'SharedSeed's, breaks every
 -- 'SharedSeed' into 'Share's, and sends those encrypted shares to
 -- other nodes (for i-th commitment at i-th element of NonEmpty
--- list). That's exactly what forms 'InnerSharesMap'.
-type InnerSharesMap = HashMap StakeholderId (NonEmpty (AsBinary Share))
+-- list). Then those shares are decrypted.
+type InnerSharesMap = HashMap StakeholderId (NonEmpty (AsBinary DecShare))
 
 -- | In a 'SharesMap', for each node we collect shares which said node
--- has received and decrypted. Specifically, if node identified by
--- 'StakeholderId' X has received NonEmpty list of shares from node
--- identified by key Y, this NonEmpty list will be at @sharesMap ! X !
--- Y@.
+-- has received and decrypted:
+--
+--   * Outer key = who decrypted the share
+--   * Inner key = who created the share
+--
+-- Let's say that there are participants {A, B, C}. If A has generated a
+-- secret and shared it, A's shares will be denoted as Ab and Ac (sent
+-- correspondingly to B and C). Then node B will decrypt the share and get
+-- Ab_dec; same for other nodes and participants. In the end, after the
+-- second phase of the protocol completes and we gather everyone's shares,
+-- we'll get the following map:
+--
+-- @
+-- { A: {B: Ba_dec, C: Ca_dec}
+-- , B: {A: Ab_dec, C: Cb_dec}
+-- , C: {A: Ac_dec, B: Bc_dec}
+-- }
+-- @
+--
+-- (Here there's only one share per node, but in reality there'll be more.)
 type SharesMap = HashMap StakeholderId InnerSharesMap
 
--- | This maps shareholders to amount of shares she should
--- issue. Depends on the stake distribution.
+-- | This maps shareholders to amount of shares she should issue. Depends on
+-- the stake distribution.
 type SharesDistribution = HashMap StakeholderId Word16
 
 instance Buildable (StakeholderId, Word16) where
@@ -133,17 +156,17 @@ instance Buildable (StakeholderId, Word16) where
 -- Vss certificates
 ----------------------------------------------------------------------------
 
--- | VssCertificate allows VssPublicKey to participate in MPC.
--- Each stakeholder should create a Vss keypair, sign VSS public key with signing
+-- | VssCertificate allows VssPublicKey to participate in MPC. Each
+-- stakeholder should create a Vss keypair, sign VSS public key with signing
 -- key and send it into blockchain.
 --
--- A public key of node is included in certificate in order to
--- enable validation of it using only node's P2PKH address.
--- Expiry epoch is last epoch when certificate is valid, expiry epoch is included
--- in certificate and signature.
+-- A public key of node is included in certificate in order to enable
+-- validation of it using only node's P2PKH address. Expiry epoch is last
+-- epoch when certificate is valid, expiry epoch is included in certificate
+-- and signature.
 --
--- Other nodes accept this certificate if it is valid and if node has
--- enough stake.
+-- Other nodes accept this certificate if it is valid and if node has enough
+-- stake.
 --
 -- Invariant: 'checkSig vcSigningKey (vcVssKey, vcExpiryEpoch) vcSignature'.
 data VssCertificate = VssCertificate
@@ -173,6 +196,16 @@ mkVssCertificate sk vk expiry =
     VssCertificate vk expiry signature (toPublic sk)
   where
     signature = sign SignVssCert sk (vk, expiry)
+
+-- | An unsafe function mimicking the unexported VssCertificate constructor.
+-- It was only written for "Pos.Communication.Limits".
+unsafeMkVssCertificate
+    :: AsBinary VssPublicKey
+    -> EpochIndex
+    -> Signature (AsBinary VssPublicKey, EpochIndex)
+    -> PublicKey
+    -> VssCertificate
+unsafeMkVssCertificate = VssCertificate
 
 -- | Recreate 'VssCertificate' from its contents. This function main
 -- 'fail' if data is invalid.

@@ -1,4 +1,5 @@
 {-# LANGUAGE CPP                 #-}
+{-# LANGUAGE ConstraintKinds     #-}
 {-# LANGUAGE GADTs               #-}
 {-# LANGUAGE PolyKinds           #-}
 {-# LANGUAGE RankNTypes          #-}
@@ -43,20 +44,20 @@ module Pos.Util.Util
        -- ** FromJSON Byte
        -- ** ToJSON Byte
        -- ** MonadFail (Either s), assuming IsString s
-       -- ** NFData Millisecond
-       -- ** NFData Microsecond
-       -- ** Buildable Attosecond
-       -- ** Buildable Femtosecond
-       -- ** Buildable Picosecond
-       -- ** Buildable Nanosecond
-       -- ** Buildable Millisecond
-       -- ** Buildable Microsecond
-       -- ** Buildable Second
-       -- ** Buildable Minute
-       -- ** Buildable Hour
-       -- ** Buildable Day
-       -- ** Buildable Week
-       -- ** Buildable Fortnight
+       -- ** HasLoggerName (MonadPseudoRandom drg)
+
+       -- ** NFData
+       -- *** Millisecond, Microsecond
+
+       -- ** MonadRandom
+       -- *** monad transformers from @transformers@
+       -- *** Ether.TaggedTrans tag t m
+       -- *** NamedPureLogger m
+       -- *** Production (from timewarp)
+       -- *** Gen (from QuickCheck)
+
+       -- ** Buildable
+       -- *** "Data.Time.Units" types
        ) where
 
 import           Universum
@@ -67,11 +68,18 @@ import           Control.Lens                   (ALens', Getter, Getting, LensRu
                                                  mappingNamer, to)
 import           Control.Monad.Base             (MonadBase)
 import           Control.Monad.Morph            (MFunctor (..))
+import qualified Control.Monad.RWS.Lazy         as Lazy
+import qualified Control.Monad.RWS.Strict       as Strict
+import qualified Control.Monad.State.Lazy       as Lazy
+import qualified Control.Monad.State.Strict     as Strict
 import           Control.Monad.Trans.Class      (MonadTrans)
 import           Control.Monad.Trans.Identity   (IdentityT (..))
 import           Control.Monad.Trans.Lift.Local (LiftLocal (..))
 import           Control.Monad.Trans.Resource   (MonadResource (..), ResourceT,
                                                  transResourceT)
+import qualified Control.Monad.Writer.Lazy      as Lazy
+import qualified Control.Monad.Writer.Strict    as Strict
+import qualified Crypto.Random                  as Rand
 import           Data.Aeson                     (FromJSON (..), ToJSON (..))
 import           Data.HashSet                   (fromMap)
 import           Data.Tagged                    (Tagged (Tagged))
@@ -86,13 +94,14 @@ import           Ether.Internal                 (HasLens (..))
 import qualified Formatting                     as F
 import qualified Language.Haskell.TH.Syntax     as TH
 import           Mockable                       (ChannelT, Counter, Distribution, Gauge,
-                                                 MFunctor' (..), Mockable (..), Promise,
-                                                 SharedAtomicT, SharedExclusiveT,
-                                                 ThreadId)
+                                                 MFunctor' (..), Mockable (..),
+                                                 Production (..), Promise, SharedAtomicT,
+                                                 SharedExclusiveT, ThreadId)
 import qualified Prelude
 import           Serokell.Data.Memory.Units     (Byte, fromBytes, toBytes)
 import           System.Wlog                    (CanLog, HasLoggerName (..),
-                                                 LoggerNameBox (..))
+                                                 LoggerNameBox (..), NamedPureLogger)
+import qualified Test.QuickCheck                as QC
 
 ----------------------------------------------------------------------------
 -- Some
@@ -147,6 +156,36 @@ instance ToJSON Byte where
 
 instance IsString s => MonadFail (Either s) where
     fail = Left . fromString
+
+instance Rand.DRG drg => HasLoggerName (Rand.MonadPseudoRandom drg) where
+    getLoggerName = pure mempty
+    modifyLoggerName = flip const
+
+#define MONADRANDOM(CTX, MONAD) \
+    instance CTX => Rand.MonadRandom (MONAD) where \
+        getRandomBytes = lift . Rand.getRandomBytes \
+
+MONADRANDOM( Rand.MonadRandom m            , ReaderT r m)
+MONADRANDOM((Rand.MonadRandom m, Monoid w) , Lazy.WriterT w m)
+MONADRANDOM((Rand.MonadRandom m, Monoid w) , Strict.WriterT w m)
+MONADRANDOM( Rand.MonadRandom m            , Lazy.StateT s m)
+MONADRANDOM( Rand.MonadRandom m            , Strict.StateT s m)
+MONADRANDOM((Rand.MonadRandom m, Monoid w) , Lazy.RWST r w s m)
+MONADRANDOM((Rand.MonadRandom m, Monoid w) , Strict.RWST r w s m)
+MONADRANDOM( Rand.MonadRandom m            , ExceptT e m)
+MONADRANDOM( Rand.MonadRandom m            , NamedPureLogger m)
+
+instance (Monad m, Monad (t m), MonadTrans t, Rand.MonadRandom m)
+         => Rand.MonadRandom (Ether.TaggedTrans tag t m) where
+    getRandomBytes = lift . Rand.getRandomBytes
+
+-- TODO: remove this when we update to newer timewarp
+deriving instance Rand.MonadRandom Production
+
+instance Rand.MonadRandom QC.Gen where
+    getRandomBytes n = do
+        [a,b,c,d,e] <- replicateM 5 QC.arbitrary
+        pure $ fst $ Rand.randomBytesGenerate n (Rand.drgNewTest (a,b,c,d,e))
 
 instance NFData Millisecond where
     rnf ms = rnf (toInteger ms)

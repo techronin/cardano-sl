@@ -24,6 +24,7 @@ import           Universum
 
 import           Control.Lens                (each, _Wrapped)
 import           Control.Monad.Trans.Control (MonadBaseControl)
+import qualified Crypto.Random               as Rand
 import           Ether.Internal              (HasLens (..))
 import           Formatting                  (sformat, (%))
 import           Paths_cardano_sl            (version)
@@ -83,8 +84,10 @@ type BlockMode ssc ctx m
        -- This constraints define block components' global logic.
        , HasLens TxpGlobalSettings ctx TxpGlobalSettings
        , SscGStateClass ssc
-       -- And 'MonadIO' is needed as usual.
+       -- 'MonadIO' is needed as usual.
        , MonadIO m
+       -- 'MonadRandom' for crypto.
+       , Rand.MonadRandom m
        , MonadReader ctx m
        )
 

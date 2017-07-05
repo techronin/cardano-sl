@@ -48,7 +48,7 @@ instance Ssc SscNistBeacon where
     sscCreateNodeContext = Tagged $ const (pure ())
 
 instance SscHelpersClass SscNistBeacon where
-    sscVerifyPayload = const $ const $ Right ()
+    sscVerifyPayload _ _ = Right ()
     sscStripPayload _ () = Just ()
     sscDefaultPayload _ = ()
 

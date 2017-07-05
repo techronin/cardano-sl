@@ -22,6 +22,8 @@ import           Universum
 
 import           Control.Lens                       ((+=), (.=))
 import           Control.Monad.Except               (MonadError (throwError), runExceptT)
+import           Control.Monad.Morph                (hoist)
+import qualified Crypto.Random                      as Rand
 import qualified Data.HashMap.Strict                as HM
 import           Formatting                         (int, sformat, (%))
 import           Serokell.Data.Memory.Units         (Byte)
@@ -125,6 +127,7 @@ sscIsDataUseful
        , MonadIO m
        , MonadSlots m
        , MonadSscMem SscGodTossing ctx m
+       , Rand.MonadRandom m
        )
     => GtTag -> StakeholderId -> m Bool
 sscIsDataUseful tag id =
@@ -141,6 +144,7 @@ sscIsDataUseful tag id =
         :: ( WithLogger m
            , MonadIO m
            , MonadSscMem SscGodTossing ctx m
+           , Rand.MonadRandom m
            )
         => TossT PureToss a -> m a
     evalTossInMem action = do
@@ -156,9 +160,10 @@ sscIsDataUseful tag id =
 
 type GtDataProcessingMode ctx m =
     ( WithLogger m
-    , MonadIO m      -- STM at least
-    , MonadDBRead m  -- to get richmen
-    , MonadGState m  -- to get block size limit
+    , MonadIO m           -- STM at least
+    , Rand.MonadRandom m  -- for crypto
+    , MonadDBRead m       -- to get richmen
+    , MonadGState m       -- to get block size limit
     , MonadSlots m
     , MonadSscMem SscGodTossing ctx m
     , MonadError TossVerFailure m
@@ -210,12 +215,14 @@ sscProcessData tag payload =
         ld <- sscRunLocalQuery ask
         maxBlockSize <- bvdMaxBlockSize <$> gsAdoptedBVData
         let epoch = ld ^. ldEpoch
+        seed <- Rand.drgNew
         getRichmenSsc epoch >>= \case
             Nothing -> throwError $ TossUnknownRichmen epoch
             Just richmen -> do
                 gs <- sscRunGlobalQuery ask
                 ExceptT $
                     sscRunLocalSTM $
+                    executeMonadBaseRandom seed $
                     sscProcessDataDo (epoch, richmen) maxBlockSize gs payload
   where
     generalizeExceptT action = either throwError pure =<< runExceptT action
@@ -226,9 +233,11 @@ sscProcessData tag payload =
         | OpeningMsg <- tag = throwError $ NotOpeningPhase si
         | SharesMsg <- tag = throwError $ NotSharesPhase si
         | otherwise = pass
+    -- (... MonadPseudoRandom) a -> (... n) a
+    executeMonadBaseRandom seed = hoist $ hoist (pure . fst . Rand.withDRG seed)
 
 sscProcessDataDo
-    :: (MonadState GtLocalData m, WithLogger m)
+    :: (MonadState GtLocalData m, WithLogger m, Rand.MonadRandom m)
     => (EpochIndex, RichmenStake)
     -> Byte
     -> GtGlobalState

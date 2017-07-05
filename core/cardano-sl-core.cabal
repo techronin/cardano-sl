@@ -89,6 +89,7 @@ library
                        Pos.Binary.Core.Types
                        Pos.Binary.Core.Version
                        Pos.Binary.Core.Genesis
+                       Pos.Binary.Size
 
                        Pos.Util.Arbitrary
                        Pos.Util.Concurrent

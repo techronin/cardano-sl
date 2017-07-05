@@ -13,6 +13,7 @@ module Pos.Ssc.GodTossing.GState
 
 import           Control.Lens                   ((.=), _Wrapped)
 import           Control.Monad.Except           (MonadError (throwError), runExceptT)
+import qualified Crypto.Random                  as Rand
 import           Data.Default                   (def)
 import qualified Data.HashMap.Strict            as HM
 import           Data.Tagged                    (Tagged (..))
@@ -28,7 +29,8 @@ import           Pos.Lrc.Types                  (RichmenStake)
 import           Pos.Ssc.Class.Storage          (SscGStateClass (..), SscVerifier)
 import           Pos.Ssc.Class.Types            (SscBlock, getSscBlock)
 import           Pos.Ssc.Extra                  (MonadSscMem, sscRunGlobalQuery)
-import           Pos.Ssc.GodTossing.Core        (GtPayload (..), VssCertificatesMap)
+import           Pos.Ssc.GodTossing.Core        (GtPayload (..), VssCertificatesMap,
+                                                 vcVssKey)
 import qualified Pos.Ssc.GodTossing.DB          as DB
 import           Pos.Ssc.GodTossing.Functions   (getStableCertsPure)
 import           Pos.Ssc.GodTossing.Genesis     (genesisCertificates)
@@ -60,7 +62,7 @@ getGlobalCerts sl =
     sscRunGlobalQuery $
         VCD.certs .
         VCD.setLastKnownSlot sl <$>
-        view (gsVssCertificates)
+        view gsVssCertificates
 
 -- | Get stable VSS certificates for given epoch.
 getStableCerts
@@ -81,6 +83,7 @@ instance SscGStateClass SscGodTossing where
     sscCalculateSeedQ _epoch richmen =
         calculateSeed
         <$> view gsCommitments
+        <*> (map vcVssKey . VCD.certs <$> view gsVssCertificates)
         <*> view gsOpenings
         <*> view gsShares
         <*> pure richmen
@@ -98,7 +101,8 @@ loadGlobalState = do
 dumpGlobalState :: GtGlobalState -> [SomeBatchOp]
 dumpGlobalState = one . SomeBatchOp . DB.gtGlobalStateToBatch
 
-type GSUpdate a = forall m . (MonadState GtGlobalState m, WithLogger m) => m a
+-- randomness needed for crypto :(
+type GSUpdate a = forall m . (MonadState GtGlobalState m, WithLogger m, Rand.MonadRandom m) => m a
 
 rollbackBlocks :: NewestFirst NE (SscBlock SscGodTossing) -> GSUpdate ()
 rollbackBlocks blocks = tossToUpdate mempty $ rollbackGT oldestEOS payloads

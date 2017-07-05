@@ -16,12 +16,12 @@ module Pos.Communication.Limits
 import           Universum
 
 import qualified Cardano.Crypto.Wallet              as CC
-import           Crypto.Hash                        (Blake2b_224, Blake2b_256)
-import qualified Crypto.PVSS                        as PVSS
+import qualified Crypto.SCRAPE                      as Scrape
 import           Data.Coerce                        (coerce)
 import           GHC.Exts                           (IsList (..))
 
 import           Pos.Binary.Class                   (AsBinary (..))
+import           Pos.Binary.Size                    (ExactSized, exactSize')
 import           Pos.Block.Core                     (Block, BlockHeader)
 import           Pos.Block.Network.Types            (MsgBlock (..), MsgGetBlocks (..),
                                                      MsgGetHeaders (..), MsgHeaders (..))
@@ -29,16 +29,17 @@ import           Pos.Communication.Types.Relay      (DataMsg (..))
 import qualified Pos.Constants                      as Const
 import           Pos.Core                           (BlockVersionData (..),
                                                      coinPortionToDouble)
-import           Pos.Crypto                         (AbstractHash, EncShare,
+import           Pos.Crypto                         (AbstractHash, DecShare, EncShare,
                                                      ProxyCert (..), ProxySecretKey (..),
                                                      ProxySignature (..), PublicKey,
-                                                     SecretProof, SecretSharingExtra (..),
-                                                     Share, Signature (..), VssPublicKey)
+                                                     Secret, SecretProof (..),
+                                                     Signature (..), VssPublicKey)
 import qualified Pos.DB.Class                       as DB
 import           Pos.Delegation.Types               (ProxySKLightConfirmation)
 import           Pos.Ssc.GodTossing.Core.Types      (Commitment (..), InnerSharesMap,
-                                                     Opening, SignedCommitment,
-                                                     VssCertificate)
+                                                     Opening (..), SignedCommitment,
+                                                     VssCertificate,
+                                                     unsafeMkVssCertificate)
 import           Pos.Ssc.GodTossing.Types.Message   (MCCommitment (..), MCOpening (..),
                                                      MCShares (..), MCVssCertificate (..))
 import           Pos.Txp.Core                       (TxAux)
@@ -58,14 +59,17 @@ import           Pos.Communication.Limits.Types
 ---- Core and lower
 ----------------------------------------------------------------------------
 
+limitViaExactSize :: forall a. ExactSized a => Limit a
+limitViaExactSize = Limit (fromIntegral (exactSize' @a))
+
 instance MessageLimitedPure CC.XSignature where
-    msgLenLimit = 64
+    msgLenLimit = limitViaExactSize
 
 instance MessageLimitedPure (Signature a) where
     msgLenLimit = Signature <$> msgLenLimit
 
 instance MessageLimitedPure PublicKey where
-    msgLenLimit = 64
+    msgLenLimit = limitViaExactSize
 
 -- Sometimes 'AsBinary a' is serialized with some overhead compared to
 -- 'a'. This overhead is estimated as at most 20.
@@ -75,29 +79,30 @@ maxAsBinaryOverhead = 20
 instance MessageLimitedPure a => MessageLimitedPure (AsBinary a) where
     msgLenLimit = coerce (msgLenLimit @a) + maxAsBinaryOverhead
 
-instance MessageLimitedPure SecretProof where
-    msgLenLimit = 64
-
 instance MessageLimitedPure VssPublicKey where
-    msgLenLimit = 33
+    msgLenLimit = limitViaExactSize
 
 instance MessageLimitedPure EncShare where
-    msgLenLimit = 101
+    msgLenLimit = limitViaExactSize
 
-instance MessageLimitedPure Share where
-    msgLenLimit = 101 --4+33+64
+instance MessageLimitedPure DecShare where
+    msgLenLimit = limitViaExactSize
 
-instance MessageLimitedPure PVSS.Commitment where
-    msgLenLimit = 33
+instance MessageLimitedPure Secret where
+    msgLenLimit = limitViaExactSize
 
-instance MessageLimitedPure PVSS.ExtraGen where
-    msgLenLimit = 33
+instance MessageLimitedPure Scrape.Commitment where
+    msgLenLimit = limitViaExactSize
 
-instance MessageLimitedPure (AbstractHash Blake2b_224 a) where
-    msgLenLimit = 28
+instance MessageLimitedPure Scrape.ExtraGen where
+    msgLenLimit = limitViaExactSize
 
-instance MessageLimitedPure (AbstractHash Blake2b_256 a) where
-    msgLenLimit = 32
+instance MessageLimitedPure Scrape.Proof where
+    msgLenLimit = limitViaExactSize
+
+instance ExactSized (AbstractHash algo a) =>
+         MessageLimitedPure (AbstractHash algo a) where
+    msgLenLimit = limitViaExactSize
 
 instance MessageLimitedPure EpochIndex where
     msgLenLimit = 10
@@ -125,31 +130,46 @@ instance MessageLimited ProxySKLightConfirmation
 ---- GodTossing
 ----------------------------------------------------------------------------
 
--- | Upper bound on number of `PVSS.Commitment`s in single
--- `Commitment`.  Actually it's a maximum number of participants in
--- GodTossing. So it also limits number of shares, for instance.
+-- | Upper bound on number of 'Scrape.Commitment's in single 'Commitment'.
+-- Actually it's a maximum number of participants in GodTossing. So it also
+-- limits number of shares, for instance.
 commitmentsNumLimit :: DB.MonadGState m => m Int
 commitmentsNumLimit =
     -- succ is just in case
     succ . ceiling . recip . coinPortionToDouble . bvdMpcThd <$>
     DB.gsAdoptedBVData
 
-instance MessageLimited SecretSharingExtra where
+instance MessageLimited SecretProof where
     getMsgLenLimit _ = do
         numLimit <- commitmentsNumLimit
-        return $ SecretSharingExtra <$> msgLenLimit <+> vector numLimit
+        parproofsLimit <- getMsgLenLimit (Proxy @Scrape.ParallelProofs)
+        return $ SecretProof
+                   <$> msgLenLimit
+                   <+> msgLenLimit
+                   <+> parproofsLimit
+                   <+> vector numLimit
 
-instance MessageLimited (AsBinary SecretSharingExtra) where
+instance MessageLimited (AsBinary SecretProof) where
     getMsgLenLimit _ =
         coerce . (maxAsBinaryOverhead +) <$>
-        getMsgLenLimit (Proxy @SecretSharingExtra)
+        getMsgLenLimit (Proxy @SecretProof)
+
+instance MessageLimited Scrape.ParallelProofs where
+    getMsgLenLimit _ = do
+        -- ParallelProofs =
+        --   • Challenge (has size 32)
+        --   • as many proofs as there are participants
+        --     (each proof has size 32)
+        numLimit <- fromIntegral <$> commitmentsNumLimit
+        return $ 32 + numLimit * 32 + 80 -- 80 just in case; something like
+                                         -- 20 should be enough
 
 instance MessageLimited Commitment where
     getMsgLenLimit _ = do
-        extraLimit <- getMsgLenLimit (Proxy @(AsBinary SecretSharingExtra))
+        proofLimit <- getMsgLenLimit (Proxy @(AsBinary SecretProof))
         numLimit <- commitmentsNumLimit
         return $
-            Commitment <$> extraLimit <+> msgLenLimit <+> multiMap numLimit
+            Commitment <$> proofLimit <+> multiMap numLimit
 
 instance MessageLimited SignedCommitment where
     getMsgLenLimit _ = do
@@ -157,18 +177,19 @@ instance MessageLimited SignedCommitment where
         return $ (,,) <$> msgLenLimit <+> commLimit <+> msgLenLimit
 
 instance MessageLimitedPure Opening where
-    msgLenLimit = 33
+    msgLenLimit = Opening <$> msgLenLimit
 
 instance MessageLimited InnerSharesMap where
     getMsgLenLimit _ = do
         numLimit <- commitmentsNumLimit
         return $ multiMap numLimit
 
--- There is some precaution in this limit. 171 means that epoch is
--- extremely large. It shouldn't happen in practice, but adding few
--- bytes to the limit is harmless.
 instance MessageLimitedPure VssCertificate where
-    msgLenLimit = 171
+    msgLenLimit = unsafeMkVssCertificate
+                    <$> msgLenLimit
+                    <+> msgLenLimit
+                    <+> msgLenLimit
+                    <+> msgLenLimit
 
 instance MessageLimitedPure MCOpening where
     msgLenLimit = MCOpening <$> msgLenLimit <+> msgLenLimit

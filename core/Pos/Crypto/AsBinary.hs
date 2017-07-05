@@ -1,4 +1,7 @@
-{-# LANGUAGE CPP                  #-}
+{-# LANGUAGE AllowAmbiguousTypes #-}
+{-# LANGUAGE CPP                 #-}
+{-# LANGUAGE RankNTypes          #-}
+{-# LANGUAGE ScopedTypeVariables #-}
 
 -- | AsBinary wrappers for Pos.Crypto.SecretSharing types.
 
@@ -13,9 +16,10 @@ import           Formatting               (bprint, int, sformat, stext, (%))
 
 import           Pos.Binary.Class         (AsBinary (..), AsBinaryClass (..), Bi,
                                            decodeFull, encode)
+import           Pos.Binary.Size          (ExactSized, exactSize')
 import           Pos.Crypto.Hashing       (hash, shortHashF)
-import           Pos.Crypto.SecretSharing (EncShare (..), Secret (..), SecretProof (..),
-                                           SecretSharingExtra (..), Share (..),
+import           Pos.Crypto.SecretSharing (DecShare (..), EncShare (..), Secret (..),
+                                           SecretProof (..), SecretProof (..),
                                            VssPublicKey (..))
 
 ----------------------------------------------------------------------------
@@ -25,11 +29,12 @@ import           Pos.Crypto.SecretSharing (EncShare (..), Secret (..), SecretPro
 -- over network without high costs on serialization/hashing
 ----------------------------------------------------------------------------
 
-checkLen :: Text -> Text -> Int -> ByteString -> ByteString
-checkLen action name len bs =
-    maybe bs error $ checkLenImpl action name len $ BS.length bs
+checkLen :: forall a. ExactSized a => Text -> Text -> ByteString -> ByteString
+checkLen action name bs =
+    maybe bs error $
+    checkLenImpl action name (exactSize' @a) (BS.length bs)
 
-checkLenImpl :: Integral a => Text -> Text -> a -> a -> Maybe Text
+checkLenImpl :: Text -> Text -> Int -> Int -> Maybe Text
 checkLenImpl action name expectedLen len
     | expectedLen == len = Nothing
     | otherwise =
@@ -42,21 +47,25 @@ checkLenImpl action name expectedLen len
             len
             expectedLen
 
-#define Ser(B, Bytes, Name) \
-  instance (Bi B, Bi (AsBinary B)) => AsBinaryClass B where {\
-    asBinary = AsBinary . checkLen "asBinary" Name Bytes . encode ;\
-    fromBinary = decodeFull . checkLen "fromBinary" Name Bytes . encode }; \
+#define Ser(B) \
+  instance (Bi B, Bi (AsBinary B), ExactSized B) => AsBinaryClass B where {\
+    asBinary = AsBinary . checkLen @B "asBinary" "B" . encode ;\
+    fromBinary = decodeFull . checkLen @B "fromBinary" "B" . encode }; \
 
-Ser(VssPublicKey, 33, "VssPublicKey")
-Ser(Secret, 33, "Secret")
-Ser(Share, 101, "Share") --4+33+64
-Ser(EncShare, 101, "EncShare")
-Ser(SecretProof, 64, "SecretProof")
+Ser(VssPublicKey)
+Ser(Secret)
+Ser(DecShare)
+Ser(EncShare)
+
+instance (Bi SecretProof, Bi (AsBinary SecretProof)) =>
+         AsBinaryClass SecretProof where
+    asBinary = AsBinary . encode
+    fromBinary = decodeFull . encode
 
 instance Buildable (AsBinary Secret) where
     build _ = "secret \\_(o.o)_/"
 
-instance Buildable (AsBinary Share) where
+instance Buildable (AsBinary DecShare) where
     build _ = "share \\_(*.*)_/"
 
 instance Buildable (AsBinary EncShare) where
@@ -64,7 +73,3 @@ instance Buildable (AsBinary EncShare) where
 
 instance Bi (AsBinary VssPublicKey) => Buildable (AsBinary VssPublicKey) where
     build = bprint ("vsspub:"%shortHashF) . hash
-
-instance Bi SecretSharingExtra => AsBinaryClass SecretSharingExtra where
-    asBinary = AsBinary . encode
-    fromBinary = decodeFull . getAsBinary

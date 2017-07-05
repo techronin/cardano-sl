@@ -1,3 +1,5 @@
+{-# LANGUAGE ScopedTypeVariables #-}
+
 -- | Unsafe arbitrary instances for crypto primitives.
 
 module Pos.Crypto.Arbitrary.Unsafe () where
@@ -9,6 +11,7 @@ import           Test.QuickCheck.Instances ()
 
 import           Pos.Binary.Class          (Bi)
 import qualified Pos.Binary.Class          as Bi
+import           Pos.Binary.Size           (ExactSized, exactSize')
 import           Pos.Crypto.Hashing        (AbstractHash, HashAlgorithm,
                                             unsafeAbstractHash)
 import           Pos.Crypto.SecretSharing  (VssKeyPair, VssPublicKey,
@@ -18,18 +21,25 @@ import           Pos.Crypto.Signing        (PublicKey, SecretKey, Signature, Sig
 import           Pos.Crypto.SignTag        (SignTag)
 import           Pos.Util.Arbitrary        (ArbitraryUnsafe (..), arbitrarySizedS)
 
-instance Bi PublicKey => ArbitraryUnsafe PublicKey where
-    arbitraryUnsafe = Bi.decodeOrFail <$> arbitrarySizedS 32
+instance (Bi PublicKey, ExactSized PublicKey) =>
+         ArbitraryUnsafe PublicKey where
+    arbitraryUnsafe = Bi.decodeOrFail <$>
+        arbitrarySizedS (exactSize' @PublicKey)
 
-instance Bi SecretKey => ArbitraryUnsafe SecretKey where
-    arbitraryUnsafe = Bi.decodeOrFail <$> arbitrarySizedS 64
+instance (Bi SecretKey, ExactSized SecretKey) =>
+         ArbitraryUnsafe SecretKey where
+    arbitraryUnsafe = Bi.decodeOrFail <$>
+        arbitrarySizedS (exactSize' @SecretKey)
 
-instance Bi (Signature a) => ArbitraryUnsafe (Signature a) where
-    arbitraryUnsafe = Bi.decodeOrFail <$> arbitrarySizedS 64
+instance (Bi (Signature a), ExactSized (Signature a)) =>
+         ArbitraryUnsafe (Signature a) where
+    arbitraryUnsafe = Bi.decodeOrFail <$>
+        arbitrarySizedS (exactSize' @(Signature a))
 
 -- Generating invalid `Signed` objects doesn't make sense even in
 -- benchmarks
-instance (Bi a, Bi SecretKey, ArbitraryUnsafe a, Arbitrary SignTag) =>
+instance (Bi a, Bi SecretKey, ExactSized SecretKey,
+          ArbitraryUnsafe a, Arbitrary SignTag) =>
          ArbitraryUnsafe (Signed a) where
     arbitraryUnsafe = mkSigned <$> arbitrary
                                <*> arbitraryUnsafe

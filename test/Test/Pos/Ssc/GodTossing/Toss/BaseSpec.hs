@@ -7,11 +7,12 @@ module Test.Pos.Ssc.GodTossing.Toss.BaseSpec
 import           Universum
 
 import           Control.Lens          (ix)
+import qualified Crypto.Random         as Rand
 import qualified Data.HashMap.Strict   as HM
 import           System.Random         (mkStdGen, randomR)
 
 import           Pos.Binary            (AsBinary)
-import           Pos.Crypto            (PublicKey, SecretKey, Share,
+import           Pos.Crypto            (DecShare, PublicKey, SecretKey,
                                         SignTag (SignCommitment), sign, toPublic)
 import           Pos.Lrc.Arbitrary     (GenesisMpcThd, ValidRichmenStake (..))
 import           Pos.Lrc.Types         (RichmenStake)
@@ -235,8 +236,8 @@ checksBadCommsPayload
         commitingNoParticipants =
             tossRunner mrs gtgs $ checkCommitmentsPayload epoch newCommsMap
         res2 = case commitingNoParticipants of
-            Left (CommitingNoParticipants (s :| [])) -> s == sid
-            _                                        -> False
+            Left (CommittingNoParticipants (s :| [])) -> s == sid
+            _                                         -> False
 
         -- Inserting a random stakeholder would perturb the valid richmen stake we already
         -- have, so an existing one must be picked to avoid failing to calculate the
@@ -423,7 +424,7 @@ checksGoodSharesPayload (GoodPayload epoch gtgs sharesMap mrs) =
 checksBadSharesPayload
     :: GoodSharesPayload
     -> StakeholderId
-    -> NonEmpty (AsBinary Share)
+    -> NonEmpty (AsBinary DecShare)
     -> VssCertificate
     -> Property
 checksBadSharesPayload (GoodPayload epoch g@GtGlobalState {..} sm mrs) sid ne cert =
@@ -568,8 +569,15 @@ checksBadCertsPayload (GoodPayload epoch gtgs certsMap mrs) sid cert =
 ----------------------------------------------------------------------------
 -- Utility functions for this module
 ----------------------------------------------------------------------------
+
+-- Going to use fake randomness here because threading MonadRandom through
+-- everything is annoying
 tossRunner :: MultiRichmenStake -> GtGlobalState -> ExceptT e PureToss a -> Either e a
-tossRunner mrs gtgs = view _1 . runPureToss mrs gtgs . runExceptT
+tossRunner mrs gtgs =
+    view _1 .
+    fst . Rand.withDRG (Rand.drgNewTest (123,456,789,12345,67890)) .
+    runPureToss mrs gtgs .
+    runExceptT
 
 customHashMapGen :: (Hashable k, Eq k) => Gen k -> Gen v -> Gen (HM.HashMap k v)
 customHashMapGen keyGen valGen = HM.fromList <$> (listOf $ (,) <$> keyGen <*> valGen)

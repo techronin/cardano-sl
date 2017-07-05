@@ -13,6 +13,7 @@ import qualified Data.ByteString             as BS
 import qualified Data.ByteString.Internal    as BS
 import qualified Data.HashMap.Strict         as HM
 import qualified Data.HashSet                as HS
+import qualified Data.Map                    as M
 import qualified Data.Set                    as S
 import qualified Data.Store.Core             as Store
 import qualified Data.Store.Internal         as Store
@@ -239,14 +240,19 @@ instance (Bi a) => Bi (Maybe a) where
             _ -> fail "unexpected Maybe tag"
 
 instance (Hashable k, Eq k, Bi k, Bi v) => Bi (HM.HashMap k v) where
-    get = fmap HM.fromList get
+    get = HM.fromList <$> get
     put = put . HM.toList
     size = sizeOf HM.toList
 
 instance (Hashable k, Eq k, Bi k) => Bi (HashSet k) where
-    get = fmap HS.fromList get
+    get = HS.fromList <$> get
     put = put . HS.toList
     size = sizeOf HS.toList
+
+instance (Ord k, Bi k, Bi v) => Bi (M.Map k v) where
+    get = M.fromList <$> get
+    put = put . M.toList
+    size = sizeOf M.toList
 
 instance (Ord k, Bi k) => Bi (Set k) where
     get = S.fromList <$> get

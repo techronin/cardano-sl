@@ -24,10 +24,10 @@ import           Pos.Crypto.RedeemSigning    (RedeemPublicKey, RedeemSecretKey,
                                               RedeemSignature, redeemKeyGen, redeemSign)
 import           Pos.Crypto.SafeSigning      (PassPhrase, createProxyCert,
                                               createProxySecretKey)
-import           Pos.Crypto.SecretSharing    (EncShare, Secret, SecretProof,
-                                              SecretSharingExtra, Share, Threshold,
-                                              VssKeyPair, VssPublicKey, decryptShare,
-                                              genSharedSecret, toVssPublicKey, vssKeyGen)
+import           Pos.Crypto.SecretSharing    (DecShare, EncShare, Secret, SecretProof,
+                                              Threshold, VssKeyPair, VssPublicKey,
+                                              decryptShare, genSharedSecret,
+                                              toVssPublicKey, vssKeyGen)
 import           Pos.Crypto.Signing          (ProxyCert, ProxySecretKey, ProxySignature,
                                               PublicKey, SecretKey, Signature, Signed,
                                               keyGen, mkSigned, proxySign, sign, toPublic)
@@ -144,35 +144,31 @@ instance (Bi w, Arbitrary w, Bi a, Arbitrary a) =>
 ----------------------------------------------------------------------------
 
 data SharedSecrets = SharedSecrets
-    { ssSecShare  :: SecretSharingExtra
-    , ssSecret    :: Secret
+    { ssSecret    :: Secret
     , ssSecProof  :: SecretProof
-    , ssShares    :: [(EncShare, Share)]
+    , ssShares    :: [(EncShare, DecShare)]
     , ssThreshold :: Threshold
     , ssVSSPKs    :: [VssPublicKey]
-    , ssPos       :: Int            -- This field is a valid, zero-based index in the
-                                    -- shares/keys lists.
+    , ssPos       :: Int            -- This field is a valid, zero-based
+                                    -- index in the shares/keys lists.
     } deriving (Show, Eq)
 
 sharedSecrets :: [SharedSecrets]
 sharedSecrets =
     unsafeMakePool "[generating shared secrets for tests...]" 50 $ do
-        parties <- generate $ choose (1, length vssKeys)
-        threshold <- generate $ choose (1, toInteger parties)
+        parties <- generate $ choose (4, length vssKeys)
+        threshold <- generate $ choose (2, toInteger parties - 2)
         vssKs <- generate $ sublistN parties vssKeys
-        (ss, s, sp, encryptedShares) <-
+        (s, sp, encryptedShares) <-
             genSharedSecret threshold (map toVssPublicKey $ fromList vssKs)
         decryptedShares <- zipWithM decryptShare vssKs encryptedShares
         let shares = zip encryptedShares decryptedShares
             vssPKs = map toVssPublicKey vssKs
-        return $ SharedSecrets ss s sp shares threshold vssPKs (parties - 1)
+        return $ SharedSecrets s sp shares threshold vssPKs (parties - 1)
 {-# NOINLINE sharedSecrets #-}
 
-instance Arbitrary SecretSharingExtra where
-    arbitrary = elements . fmap ssSecShare $ sharedSecrets
-
-instance Arbitrary (AsBinary SecretSharingExtra) where
-    arbitrary = asBinary @SecretSharingExtra <$> arbitrary
+instance Arbitrary SecretProof where
+    arbitrary = elements . fmap ssSecProof $ sharedSecrets
 
 instance Arbitrary (AsBinary SecretProof) where
     arbitrary = asBinary @SecretProof <$> arbitrary
@@ -183,20 +179,17 @@ instance Arbitrary Secret where
 instance Arbitrary (AsBinary Secret) where
     arbitrary = asBinary @Secret <$> arbitrary
 
-instance Arbitrary SecretProof where
-    arbitrary = elements . fmap ssSecProof $ sharedSecrets
-
 instance Arbitrary EncShare where
     arbitrary = elements . concatMap (fmap fst . ssShares) $ sharedSecrets
 
 instance Arbitrary (AsBinary EncShare) where
     arbitrary = asBinary @EncShare <$> arbitrary
 
-instance Arbitrary Share where
+instance Arbitrary DecShare where
     arbitrary = unsafePerformIO <$> (decryptShare <$> arbitrary <*> arbitrary)
 
-instance Arbitrary (AsBinary Share) where
-    arbitrary = asBinary @Share <$> arbitrary
+instance Arbitrary (AsBinary DecShare) where
+    arbitrary = asBinary @DecShare <$> arbitrary
 
 instance Arbitrary SharedSecrets where
     arbitrary = elements sharedSecrets

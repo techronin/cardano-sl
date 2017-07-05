@@ -44,7 +44,7 @@ import           Pos.Core.Types                    (BlockVersion (..),
                                                     BlockVersionData (..), Script (..),
                                                     SoftwareVersion (..))
 import qualified Pos.Core.Types                    as Types
-import           Pos.Crypto                        (PublicKey, Share)
+import           Pos.Crypto                        (DecShare, PublicKey)
 import           Pos.Crypto.Arbitrary              ()
 import           Pos.Util.Arbitrary                (makeSmall)
 import           Pos.Util.Util                     (leftToPanic)
@@ -334,7 +334,7 @@ instance Arbitrary Microsecond where
 deriving instance Arbitrary Types.Timestamp
 
 newtype SmallHashMap =
-    SmallHashMap (HashMap PublicKey (HashMap PublicKey (AsBinary Share)))
+    SmallHashMap (HashMap PublicKey (HashMap PublicKey (AsBinary DecShare)))
     deriving Show
 
 instance Arbitrary SmallHashMap where
