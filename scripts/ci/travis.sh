@@ -39,7 +39,7 @@ if [[ "$with_haddock" == "true" ]]; then
 fi
 
 stack --nix --no-terminal --local-bin-path daedalus/ install cardano-sl \
-  $EXTRA_STACK --fast --jobs=2 \
+  $EXTRA_STACK --jobs=2 \
   --ghc-options="-j -DCONFIG=$DCONFIG +RTS -A128m -n2m -RTS" \
   --flag cardano-sl-core:-asserts \
   --flag cardano-sl-core:-dev-mode

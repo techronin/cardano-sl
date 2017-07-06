@@ -80,7 +80,6 @@ test_script:
       -j 2
       --no-terminal
       --local-bin-path daedalus
-      --fast
       --test
       --no-haddock-deps
       --bench
