@@ -112,7 +112,8 @@ hoistMkListeners nat rnat (MkListeners act ins outs) = MkListeners act' ins outs
 
 
 convertSendActions
-    :: ( WithLogger m
+    :: forall m .
+       ( WithLogger m
        , Mockable Throw m
        , Mockable SharedAtomic m
        )
@@ -125,13 +126,7 @@ convertSendActions ourVerInfo sA = SendActions
                Left (Conversation l) -> N.Conversation $ \conv -> do
                    mapM_ logOSNR alts'
                    l conv
-               Right errs -> case NE.head alts of
-                   Conversation l_ -> N.Conversation $ \conv -> do
-                       let _ = l_ conv
-                       logWarning $ sformat
-                           ("Failed to choose appropriate conversation: "%listJson)
-                           errs
-                       throw $ NE.head errs
+               Right errs -> throwErrs errs (NE.head alts)
     , enqueueConversation = \peers msg mkConv -> N.enqueueConversation sA peers msg $
           \nodeId pVI ->
               let alts = mkConv nodeId pVI
@@ -140,16 +135,23 @@ convertSendActions ourVerInfo sA = SendActions
                       Left (Conversation l) -> N.Conversation $ \conv -> do
                           mapM_ logOSNR alts'
                           l conv
-                      Right errs -> case NE.head alts of
-                          Conversation l_ -> N.Conversation $ \conv -> do
-                              let _ = l_ conv
-                              logWarning $ sformat
-                                  ("Failed to choose appropriate conversation: "%listJson)
-                                  errs
-                              throw $ NE.head errs
+                      Right errs -> throwErrs errs (NE.head alts)
     }
   where
     ourOutSpecs = vIOutHandlers ourVerInfo
+
+    throwErrs
+        :: forall e t x .
+           ( Exception e, Buildable e )
+        => NonEmpty e
+        -> Conversation m t
+        -> N.Conversation PackingType m x
+    throwErrs errs (Conversation l) = N.Conversation $ \conv -> do
+        let _ = l conv
+        logWarning $ sformat
+            ("Failed to choose appropriate conversation: "%listJson)
+            errs
+        throw $ NE.head errs
 
     fstArg :: (a -> b) -> Proxy a
     fstArg _ = Proxy
