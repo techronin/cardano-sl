@@ -109,7 +109,7 @@ sscRelay
 sscRelay gtTag contentsToKey toContents processData =
     InvReqData NoMempool $
         InvReqDataParams
-          { invReqMsgType = MsgMPC
+          { invReqMsgType = \origin _ -> MsgMPC origin
           , contentsToKey = pure . tagWith contentsProxy . contentsToKey
           , handleInv = \_ -> sscIsDataUseful gtTag . unTagged
           , handleReq =

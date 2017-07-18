@@ -21,7 +21,7 @@ import           Pos.Communication.PeerState    (WithPeerState)
 import           Pos.Communication.Protocol     (ConversationActions, HandlerSpec (..),
                                                  ListenerSpec (..), Message, NodeId,
                                                  OutSpecs, VerInfo, checkingInSpecs,
-                                                 messageName, convertSendActions, SendActions)
+                                                 messageName, SendActions)
 import           Pos.DB.Class                   (MonadGState)
 
 -- TODO automatically provide a 'recvLimited' here by using the
@@ -39,16 +39,16 @@ listenerConv
        , Mockable Throw m
        , Mockable SharedAtomic m
        )
-    => (VerInfo -> NodeId -> SendActions m -> ConversationActions snd rcv m -> m ())
+    => (VerInfo -> NodeId -> ConversationActions snd rcv m -> m ())
     -> (ListenerSpec m, OutSpecs)
 listenerConv h = (lspec, mempty)
   where
     spec = (rcvMsgName, ConvHandler sndMsgName)
     lspec =
       flip ListenerSpec spec $ \ourVerInfo ->
-          N.Listener $ \peerVerInfo' nNodeId sendActions conv -> do
+          N.Listener $ \peerVerInfo' nNodeId conv -> do
               checkingInSpecs ourVerInfo peerVerInfo' spec nNodeId $
-                  h ourVerInfo nNodeId (convertSendActions ourVerInfo sendActions) conv
+                  h ourVerInfo nNodeId conv
 
     sndProxy :: Proxy snd
     sndProxy = Proxy

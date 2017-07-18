@@ -13,7 +13,7 @@ import           Formatting                    (bprint, build, (%))
 import           Node                          (Message)
 
 import           Pos.Binary.Class              (Bi)
-import           Pos.Communication.Types.Protocol (MsgType)
+import           Pos.Communication.Types.Protocol (Msg, NodeId)
 import           Pos.Communication.Types.Relay (DataMsg, InvOrData, ReqMsg)
 
 data RelayError = UnexpectedInv
@@ -30,12 +30,17 @@ data PropagationMsg where
         , Eq key
         , Message (ReqMsg key)
         , Bi (ReqMsg key))
-        => !MsgType -> !key -> !contents -> PropagationMsg
+        => !(Set NodeId -> Msg)
+        -> !key
+        -> !contents
+        -> PropagationMsg
     DataOnlyPM ::
         ( Message (DataMsg contents)
         , Bi (DataMsg contents)
         , Buildable contents)
-        => !MsgType -> !contents -> PropagationMsg
+        => !(Set NodeId -> Msg)
+        -> !contents
+        -> PropagationMsg
 
 instance Buildable PropagationMsg where
     build (InvReqDataPM _ key _) =

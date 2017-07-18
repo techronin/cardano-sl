@@ -12,24 +12,28 @@ module Pos.Launcher.Runner
 
        -- * Exported for custom usage in CLI utils
        , runServer
+
+       , OQ
+       , initQueue
        ) where
 
+import qualified Data.Map                        as M
 import           Universum                       hiding (bracket)
 
 import           Control.Monad.Fix               (MonadFix)
 import qualified Control.Monad.Reader            as Mtl
-import qualified Data.Map                        as M
-import           Formatting                      (build, sformat, (%))
+import           Formatting                      (build, sformat, (%), shown)
 import           Mockable                        (MonadMockable, Production (..), bracket,
-                                                  killThread)
+                                                  killThread, Throw, throw, Mockable,
+                                                  async, cancel)
+import qualified Network.Broadcast.OutboundQueue as OQ
+import           Network.Broadcast.OutboundQueue.Classification (FormatMsg (..))
 import           Node                            (Node, NodeAction (..), NodeEndPoint,
                                                   ReceiveDelay, Statistics,
                                                   defaultNodeEnvironment,
-                                                  hoistSendActions, noReceiveDelay, node,
+                                                  noReceiveDelay, node,
                                                   simpleNodeEndPoint)
-import           Node.Conversation               (Converse)
-import           Node.OutboundQueue              (OutboundQueue)
-import           Network.Broadcast.OutboundQueue as OQ
+import qualified Node.Conversation               as N (Converse, Conversation, converseWith)
 import           Node.Util.Monitor               (setupMonitor, stopMonitor)
 import qualified System.Metrics                  as Metrics
 import           System.Random                   (newStdGen)
@@ -40,10 +44,11 @@ import           System.Wlog                     (WithLogger, logInfo)
 import           Pos.Binary                      ()
 import           Pos.Communication               (ActionSpec (..), BiP (..), InSpecs (..),
                                                   MkListeners (..), OutSpecs (..),
-                                                  VerInfo (..), allListeners,
-                                                  hoistMkListeners, NodeId, NodeType (..),
-                                                  MsgType (..), Msg (..), PackingType,
-                                                  PeerData)
+                                                  VerInfo (..), allListeners, Msg,
+                                                  PeerData, PackingType,
+                                                  hoistSendActions, makeSendActions,
+                                                  WithPeerState, SendActions,
+                                                  makeEnqueueMsg, EnqueueMsg)
 import qualified Pos.Constants                   as Const
 import           Pos.Context                     (NodeContext (..))
 import           Pos.DHT.Real                    (foreverRejoinNetwork)
@@ -51,7 +56,7 @@ import           Pos.Discovery                   (DiscoveryContextSum (..))
 import           Pos.Launcher.Param              (BaseParams (..), LoggingParams (..),
                                                   NodeParams (..))
 import           Pos.Launcher.Resource           (NodeResources (..), hoistNodeResources)
-import           Pos.Network.Types               (NetworkConfig (..))
+import           Pos.Network.Types               (NetworkConfig (..), NodeId)
 import           Pos.Security                    (SecurityWorkersClass)
 import           Pos.Ssc.Class                   (SscConstraint)
 import           Pos.Statistics                  (EkgParams (..), StatsdParams (..))
@@ -83,32 +88,37 @@ runRealBasedMode
     -> (ActionSpec m a, OutSpecs)
     -> Production a
 runRealBasedMode unwrap wrap nr@NodeResources {..} (ActionSpec action, outSpecs) =
-    runRealModeDo (hoistNodeResources unwrap nr) listeners outSpecs $
+    runRealModeDo (hoistNodeResources unwrap nr) outSpecs $
     ActionSpec $ \vI sendActions ->
         unwrap . action vI $ hoistSendActions wrap unwrap sendActions
-  where
-    listeners = hoistMkListeners unwrap wrap allListeners
 
 -- | RealMode runner.
 runRealModeDo
     :: forall ssc a.
        (SscConstraint ssc, SecurityWorkersClass ssc)
     => NodeResources ssc (RealMode ssc)
-    -> MkListeners (RealMode ssc)
     -> OutSpecs
     -> ActionSpec (RealMode ssc) a
     -> Production a
-runRealModeDo NodeResources {..} listeners outSpecs action =
+runRealModeDo NodeResources {..} outSpecs action =
     specialDiscoveryWrapper $ do
         jsonLogConfig <- maybe
             (pure JsonLogDisabled)
             jsonLogConfigFromHandle
             nrJLogHandle
 
+        oq <- initQueue ncNetworkConfig
+
         runToProd jsonLogConfig $
-            runServer ncNetworkConfig (simpleNodeEndPoint nrTransport) (const noReceiveDelay)
-            listeners outSpecs
-            startMonitoring stopMonitoring action
+          runServer ncNetworkConfig
+                    (simpleNodeEndPoint nrTransport)
+                    (const noReceiveDelay)
+                    allListeners
+                    outSpecs
+                    startMonitoring
+                    stopMonitoring
+                    oq
+                    action
   where
     NodeContext {..} = nrContext
     NodeParams {..} = ncNodeParams
@@ -154,7 +164,10 @@ runRealModeDo NodeResources {..} listeners outSpecs action =
         DCStatic _          -> identity
         DCKademlia kademlia -> foreverRejoinNetwork kademlia
 
-    runToProd :: forall t . JsonLogConfig -> RealMode ssc t -> Production t
+    runToProd :: forall t .
+                 JsonLogConfig
+              -> RealMode ssc t
+              -> Production t
     runToProd jlConf act = Mtl.runReaderT act $
         RealModeContext
             nrDBs
@@ -165,51 +178,93 @@ runRealModeDo NodeResources {..} listeners outSpecs action =
             lpRunnerTag
             nrContext
 
+newtype EnqueuedConversation m t =
+    EnqueuedConversation (Msg, NodeId -> PeerData -> N.Conversation PackingType m t)
+
+instance FormatMsg (EnqueuedConversation m) where
+    formatMsg = (\k (EnqueuedConversation (msg, _)) -> k msg) <$> shown
+
+type OQ m = OQ.OutboundQ (EnqueuedConversation m) NodeId
+
+sendMsgFromConverse
+    :: N.Converse PackingType PeerData m
+    -> OQ.SendMsg m (EnqueuedConversation m) NodeId
+sendMsgFromConverse converse (EnqueuedConversation (_, k)) nodeId =
+    N.converseWith converse nodeId (k nodeId)
+
+oqEnqueue
+    :: ( Mockable Throw m, MonadIO m, WithLogger m )
+    => OQ m
+    -> Msg
+    -> (NodeId -> VerInfo -> N.Conversation PackingType m t)
+    -> m (Map NodeId (m t))
+oqEnqueue oq msgType k = do
+    itList <- OQ.enqueue oq msgType (EnqueuedConversation (msgType, k)) mempty
+    let itMap = M.fromList itList
+    return ((>>= either throw return) <$> itMap)
+
+oqDequeue
+    :: ( MonadIO m
+       , MonadMockable m
+       , WithLogger m
+       )
+    => OQ m
+    -> N.Converse PackingType PeerData m
+    -> m (m ())
+oqDequeue oq converse = do
+    it <- async $ OQ.dequeueThread oq (sendMsgFromConverse converse)
+    return (cancel it)
+
+initQueue
+    :: (MonadIO m, MonadIO m', MonadMockable m', WithLogger m')
+    => NetworkConfig
+    -> m (OQ m')
+initQueue NetworkConfig{..} =
+    -- TODO: Find better self identifier (for improved logging)
+    OQ.new ("self" :: String) enqueuePolicy dequeuePolicy failurePolicy
+  where
+    ourNodeType = ncNodeType
+    enqueuePolicy = OQ.defaultEnqueuePolicy ourNodeType
+    dequeuePolicy = OQ.defaultDequeuePolicy ourNodeType
+    failurePolicy = OQ.defaultFailurePolicy ourNodeType
+
 runServer
     :: forall m t b .
-       (MonadIO m, MonadMockable m, MonadFix m, WithLogger m)
+       (MonadIO m, MonadMockable m, MonadFix m, WithLogger m, WithPeerState m)
     => NetworkConfig
     -> (m (Statistics m) -> NodeEndPoint m)
     -> (m (Statistics m) -> ReceiveDelay m)
-    -> MkListeners m
+    -> (EnqueueMsg m -> MkListeners m)
     -> OutSpecs
     -> (Node m -> m t)
     -> (t -> m ())
+    -> OQ m
     -> ActionSpec m b
     -> m b
-runServer NetworkConfig {..} mkTransport mkReceiveDelay mkL (OutSpecs wouts) withNode afterNode (ActionSpec action) = do
+runServer NetworkConfig {..} mkTransport mkReceiveDelay mkL (OutSpecs wouts) withNode afterNode oq (ActionSpec action) = do
+    let enq :: EnqueueMsg m
+        enq = makeEnqueueMsg ourVerInfo (oqEnqueue oq)
+        mkL' = mkL enq
+        InSpecs ins = inSpecs mkL'
+        OutSpecs outs = outSpecs mkL'
+        ourVerInfo =
+            VerInfo Const.protocolMagic Const.lastKnownBlockVersion ins $ outs <> wouts
+        mkListeners' theirVerInfo =
+            mkListeners mkL' ourVerInfo theirVerInfo
     stdGen <- liftIO newStdGen
     logInfo $ sformat ("Our verInfo: "%build) ourVerInfo
-    let ourNodeType = ncNodeType
-        enqueuePolicy = OQ.defaultEnqueuePolicy ourNodeType
-        dequeuePolicy = OQ.defaultDequeuePolicy ourNodeType
-        failurePolicy = OQ.defaultFailurePolicy ourNodeType
-    -- TODO use oq to implement subscription listeners.
-    oq <- OQ.new ("self" :: String) enqueuePolicy dequeuePolicy failurePolicy
-    let getNodeType :: NodeId -> NodeType
-        -- TODO verify that the NodeId is normalized: if we use a numeric
-        -- address, but the peer uses a DNS name, we'll still correctly identify
-        -- it.
-        getNodeType nid = case M.lookup nid ncClassification of
-            -- If we don't know of this peer then we assume it's an edge node.
-            Nothing -> NodeEdge
-            Just (ty, _) -> ty
-        getMsgType :: Msg -> MsgType
-        getMsgType (Msg (ty, _)) = ty
-        getMsgOrigin :: Msg -> Origin NodeId
-        getMsgOrigin (Msg (_, origin)) = origin
-        mkOutboundQueue
-            :: Converse PackingType PeerData m
-            -> m (OutboundQueue PackingType PeerData NodeId Msg m)
-        mkOutboundQueue converse = OQ.asOutboundQueue oq identity getNodeType getMsgType getMsgOrigin converse
-    node mkTransport mkReceiveDelay mkConnectDelay mkOutboundQueue stdGen BiP ourVerInfo defaultNodeEnvironment $ \__node ->
-        NodeAction mkListeners' $ \sendActions ->
-            bracket (withNode __node) afterNode (const (action ourVerInfo sendActions))
+    node mkTransport mkReceiveDelay mkConnectDelay stdGen BiP ourVerInfo defaultNodeEnvironment $ \__node ->
+        NodeAction mkListeners' $ \converse ->
+            let sendActions :: SendActions m
+                sendActions = makeSendActions ourVerInfo (oqEnqueue oq) converse
+            in  bracket (acquire converse __node) release (const (action ourVerInfo sendActions))
   where
+    acquire converse __node = do
+        stopDequeue <- oqDequeue oq converse
+        other <- withNode __node
+        return (stopDequeue, other)
+    release (stopDequeue, other) = do
+        stopDequeue
+        afterNode other
     mkConnectDelay = const (pure Nothing)
-    InSpecs ins = inSpecs mkL
-    OutSpecs outs = outSpecs mkL
-    ourVerInfo =
-        VerInfo Const.protocolMagic Const.lastKnownBlockVersion ins $ outs <> wouts
-    mkListeners' theirVerInfo =
-        mkListeners mkL ourVerInfo theirVerInfo
+

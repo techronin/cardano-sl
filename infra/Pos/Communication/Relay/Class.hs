@@ -1,6 +1,7 @@
 {-# LANGUAGE GADTs           #-}
 {-# LANGUAGE TypeFamilies    #-}
 {-# LANGUAGE TemplateHaskell #-}
+{-# LANGUAGE RankNTypes      #-}
 
 module Pos.Communication.Relay.Class
        ( Relay (..)
@@ -16,7 +17,8 @@ import           Pos.Binary.Class               (Bi)
 import           Pos.Communication.Limits.Types (MessageLimited)
 import           Pos.Communication.Types.Relay  (DataMsg, InvMsg, InvOrData, MempoolMsg,
                                                  ReqMsg (..))
-import           Pos.Communication.Types.Protocol (NodeId, SendActions, MsgType)
+import           Pos.Communication.Types.Protocol (NodeId, SendActions, Msg, EnqueueMsg)
+import           Pos.Network.Types              (Origin)
 
 -- | Data for general Inv/Req/Dat framework
 
@@ -55,7 +57,7 @@ data MempoolParams m where
       ) => Proxy tag -> m [key] -> MempoolParams m
 
 data InvReqDataParams key contents m = InvReqDataParams
-    { invReqMsgType :: !MsgType
+    { invReqMsgType :: !(Origin NodeId -> Set NodeId -> Msg)
     , contentsToKey :: contents -> m key
       -- ^ Get key for given contents.
     , handleInv     :: NodeId -> key -> m Bool
@@ -67,8 +69,8 @@ data InvReqDataParams key contents m = InvReqDataParams
     }
 
 data DataParams contents m = DataParams
-    { dataMsgType    :: !MsgType
-    , handleDataOnly :: SendActions m -> NodeId -> contents -> m Bool
+    { dataMsgType    :: !(Origin NodeId -> Set NodeId -> Msg)
+    , handleDataOnly :: EnqueueMsg m -> NodeId -> contents -> m Bool
       -- ^ Handle data msg and return True if message is to be propagated
       -- FIXME the SendActions shouldn't be there. It is for the benefit of
       -- a delegation listener which, in its handleDataOnly callback, must

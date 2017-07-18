@@ -15,10 +15,10 @@ import           Node                            (noReceiveDelay, simpleNodeEndP
 import           System.Wlog                     (WithLogger, logDebug, logInfo)
 
 import           Pos.Communication               (ActionSpec (..), MkListeners, NodeId,
-                                                  OutSpecs, WorkerSpec)
+                                                  OutSpecs, WorkerSpec, WithPeerState)
 import           Pos.Discovery                   (findPeers)
 import           Pos.Launcher                    (BaseParams (..), LoggingParams (..),
-                                                  runServer)
+                                                  runServer, OQ, initQueue)
 import           Pos.Network.Types               (NetworkConfig, emptyNetworkConfig,
                                                   NodeType (NodeEdge))
 import           Pos.Reporting.MemState          (emptyReportingContext)
@@ -85,6 +85,7 @@ runRawStaticPeersWallet networkConfig transport peers WalletParams {..}
                         listeners (ActionSpec action, outs) =
     bracket openDB closeDB $ \db -> do
         keyData <- keyDataFromFile wpKeyFilePath
+        oq <- initQueue networkConfig
         flip Mtl.runReaderT
             ( LightWalletContext
                 keyData
@@ -94,7 +95,7 @@ runRawStaticPeersWallet networkConfig transport peers WalletParams {..}
                 JsonLogDisabled
                 lpRunnerTag
             ) .
-            runServer_ networkConfig transport listeners outs . ActionSpec $ \vI sa ->
+            runServer_ networkConfig transport listeners outs oq . ActionSpec $ \vI sa ->
             logInfo "Started wallet, joining network" >> action vI sa
   where
     LoggingParams {..} = bpLoggingParams wpBaseParams
@@ -106,11 +107,11 @@ runRawStaticPeersWallet networkConfig transport peers WalletParams {..}
     closeDB = closeState
 
 runServer_
-    :: (MonadIO m, MonadMockable m, MonadFix m, WithLogger m)
-    => NetworkConfig -> Transport m -> MkListeners m -> OutSpecs -> ActionSpec m b -> m b
-runServer_ networkConfig transport mkl outSpecs =
-    runServer networkConfig (simpleNodeEndPoint transport) (const noReceiveDelay) mkl
-        outSpecs acquire release
+    :: (MonadIO m, MonadMockable m, MonadFix m, WithLogger m, WithPeerState m)
+    => NetworkConfig -> Transport m -> MkListeners m -> OutSpecs -> OQ m -> ActionSpec m b -> m b
+runServer_ networkConfig transport mkl outSpecs oq =
+    runServer networkConfig (simpleNodeEndPoint transport) (const noReceiveDelay) (const mkl)
+        outSpecs acquire release oq
   where
     acquire = const pass
     release = const pass

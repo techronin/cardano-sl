@@ -1,4 +1,5 @@
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE RankNTypes          #-}
 -- | Announcements related to blocks.
 
 module Pos.Block.Network.Announce
@@ -22,9 +23,9 @@ import           Pos.Block.Network.Types    (MsgGetHeaders (..), MsgHeaders (..)
 import           Pos.Communication.Limits   (recvLimited)
 import           Pos.Communication.Message  ()
 import           Pos.Communication.Protocol (Conversation (..), ConversationActions (..),
-                                             OutSpecs, SendActions (..), convH,
+                                             OutSpecs, EnqueueMsg, convH,
                                              toOutSpecs, waitForConversations,
-                                             MsgType (..), sendMsg)
+                                             MsgType (..), Origin (..))
 import           Pos.Context                (recoveryInProgress)
 import           Pos.Core                   (headerHash, prevBlockL)
 import           Pos.Crypto                 (shortHashF)
@@ -43,10 +44,10 @@ announceBlockOuts = toOutSpecs [convH (Proxy :: Proxy (MsgHeaders ssc))
 
 announceBlock
     :: WorkMode ssc ctx m
-    => SendActions m -> MainBlockHeader ssc -> m ()
-announceBlock sendActions header = do
+    => EnqueueMsg m -> MainBlockHeader ssc -> m ()
+announceBlock enqueue header = do
     logDebug $ sformat ("Announcing header to others:\n"%build) header
-    void $ converseToNeighbors sendActions (sendMsg MsgAnnounceBlockHeader) announceBlockDo >>= waitForConversations
+    void $ converseToNeighbors enqueue (\_ -> MsgAnnounceBlockHeader OriginSender) announceBlockDo >>= waitForConversations
   where
     announceBlockDo nodeId = pure $ Conversation $ \cA -> do
         SecurityParams{..} <- view (lensOf @SecurityParams)

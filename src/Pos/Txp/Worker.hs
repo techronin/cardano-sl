@@ -5,7 +5,6 @@ module Pos.Txp.Worker
        ( txpWorkers
        ) where
 
-import qualified Data.Set            as S
 import           Universum
 
 import           Pos.Communication   (OutSpecs, WorkerSpec)
@@ -24,11 +23,9 @@ import           System.Wlog         (logDebug, logInfo, logWarning)
 import           Pos.Communication   (Conversation (..), ConversationActions (..),
                                       DataMsg (..), InvMsg (..), InvOrData,
                                       InvReqDataParams (..), MempoolMsg (..),
-                                      ReqMsg (..), SendActions, TxMsgContents, convH,
+                                      ReqMsg (..), SendActions (..), TxMsgContents, convH,
                                       expectData, handleDataDo, handleInvDo, recvLimited,
-                                      toOutSpecs, worker, sendMsg, MsgType (..),
-                                      enqueueConversation, waitForConversations,
-                                      NodeId)
+                                      toOutSpecs, worker, NodeId, MsgType (..))
 import           Pos.Discovery.Class (getPeers)
 import           Pos.Slotting        (getLastKnownSlotDuration)
 import           Pos.Txp.Core        (TxId)
@@ -109,8 +106,11 @@ getTxMempoolInvs
     => SendActions m -> NodeId -> m [TxId]
 getTxMempoolInvs sendActions node = do
     logInfo ("Querying tx mempool from node " <> show node)
-    it <- enqueueConversation sendActions (S.singleton node) (sendMsg MsgTransaction) $
-        \_ _ -> pure $ Conversation $
+    -- Do the old withConnectionTo, bypassing the outbound queue.
+    -- That's fine, as this particular piece of program will be removed soon
+    -- in favour of a subscription model.
+    withConnectionTo sendActions node $
+        \_ -> pure $ Conversation $
             \(conv :: (ConversationActions
                                       (MempoolMsg TxMsgContents)
                                       (InvMsg TxIdT)
@@ -130,8 +130,6 @@ getTxMempoolInvs sendActions node = do
                                   Nothing           -> getInvs
                                   Just (Tagged key) -> (key:) <$> getInvs
                 getInvs
-    it' <- waitForConversations it
-    return $ foldr (++) [] it'
 
 -- | Request several transactions.
 requestTxs
@@ -144,8 +142,11 @@ requestTxs sendActions node txIds = do
     logDebug $ sformat
         ("First 5 (or less) transactions: "%listJson)
         (take 5 txIds)
-    it <- enqueueConversation sendActions (S.singleton node) (sendMsg MsgTransaction) $
-        \_ _ -> pure $ Conversation $
+    -- Do the old withConnectionTo, bypassing the outbound queue.
+    -- That's fine, as this particular piece of program will be removed soon
+    -- in favour of a subscription model.
+    void $ withConnectionTo sendActions node $
+        \_ -> pure $ Conversation $
           \(conv :: (ConversationActions
                                      (ReqMsg TxIdT)
                                      (InvOrData TxIdT TxMsgContents)
@@ -161,10 +162,9 @@ requestTxs sendActions node txIds = do
                              \(DataMsg dmContents) ->
                                case txInvReqDataParams of
                                  InvReqDataParams {..} ->
-                                     handleDataDo node MsgTransaction sendActions contentsToKey (handleData node) dmContents
+                                     handleDataDo node (\origin _ -> MsgTransaction origin) (enqueueMsg sendActions) contentsToKey (handleData node) dmContents
                for_ txIds $ \(Tagged -> id) ->
                    getTx id `catch` handler id
-    _ <- waitForConversations it
     logInfo $ sformat
         ("Finished requesting txs from node "%shown)
         node

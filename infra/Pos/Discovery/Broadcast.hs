@@ -1,3 +1,5 @@
+{-# LANGUAGE RankNTypes #-}
+
 -- | This module implements the capabilities of broadcasting info to
 -- neighbors.
 module Pos.Discovery.Broadcast
@@ -11,7 +13,8 @@ import           Mockable                   (MonadMockable)
 import           System.Wlog                (WithLogger, logDebug, logWarning)
 import           Universum                  hiding (catchAll)
 
-import           Pos.Communication.Protocol (Conversation, SendActions (..), NodeId, Msg)
+import           Pos.Communication.Protocol (Conversation, EnqueueMsg,
+                                             NodeId, Msg)
 import           Pos.Discovery.Class        (MonadDiscovery, getPeers)
 import           Pos.Infra.Constants        (neighborsSendThreshold)
 
@@ -28,14 +31,14 @@ converseToNeighbors
        , MonadDiscovery m
        , WithLogger m
        )
-    => SendActions m
-    -> Msg
+    => EnqueueMsg m
+    -> (Set NodeId -> Msg)
     -> (NodeId -> NonEmpty (Conversation m ()))
     -> m (Map NodeId (m ()))
-converseToNeighbors sendActions msgType convHandler = do
+converseToNeighbors enqueue mkMsg convHandler = do
     peers <- check =<< getPeers
     logDebug $ "converseToNeighbors: sending to nodes: " <> show peers
-    t <- enqueueConversation sendActions peers msgType $ \peer _ ->
+    t <- enqueue (mkMsg peers) $ \peer _ ->
         convHandler peer
     logDebug "converseToNeighbors: sending to nodes done"
     return t

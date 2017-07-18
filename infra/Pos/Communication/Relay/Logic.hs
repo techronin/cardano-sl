@@ -35,7 +35,6 @@ import           Data.Typeable                      (typeRep)
 import           Formatting                         (build, sformat, shown, stext, (%))
 import           Mockable                           (MonadMockable, handleAll)
 import           Node.Message.Class                 (Message)
-import           Node                               (waitForConversations)
 import           System.Wlog                        (WithLogger, logDebug,
                                                      logWarning)
 import           Universum
@@ -47,11 +46,10 @@ import           Pos.Communication.Listener         (listenerConv)
 import           Pos.Communication.Protocol         (Conversation (..),
                                                      ConversationActions (..),
                                                      ListenerSpec, MkListeners, NodeId,
-                                                     OutSpecs, SendActions (..),
-                                                     enqueueConversation',
+                                                     OutSpecs, EnqueueMsg,
                                                      constantListeners, convH,
-                                                     toOutSpecs, Msg, MsgType,
-                                                     forwardMsg, sendMsg)
+                                                     toOutSpecs, Msg, Origin (..),
+                                                     waitForConversations)
 import           Pos.Communication.Relay.Class      (DataParams (..),
                                                      InvReqDataParams (..),
                                                      MempoolParams (..),
@@ -88,7 +86,7 @@ handleReqL
        )
     => (NodeId -> key -> m (Maybe contents))
     -> (ListenerSpec m, OutSpecs)
-handleReqL handleReq = listenerConv $ \__ourVerInfo nodeId _ conv ->
+handleReqL handleReq = listenerConv $ \__ourVerInfo nodeId conv ->
     let handlingLoop = do
             mbMsg <- recvLimited conv
             whenJust mbMsg $ \ReqMsg{..} -> do
@@ -117,7 +115,7 @@ handleMempoolL
     -> [(ListenerSpec m, OutSpecs)]
 handleMempoolL NoMempool = []
 handleMempoolL (KeyMempool tagP handleMempool) = pure $ listenerConv $
-    \__ourVerInfo __nodeId _ conv -> do
+    \__ourVerInfo __nodeId conv -> do
         mbMsg <- recvLimited conv
         whenJust mbMsg $ \msg@MempoolMsg -> do
             let _ = msg `asProxyTypeOf` mmP
@@ -143,17 +141,20 @@ handleDataOnlyL
        , MessageLimited (DataMsg contents)
        , MonadDiscovery m
        )
-    => MsgType
-    -> (SendActions m -> NodeId -> contents -> m Bool)
+    => EnqueueMsg m
+    -> (Origin NodeId -> Set NodeId -> Msg)
+    -> (NodeId -> contents -> m Bool)
     -> (ListenerSpec m, OutSpecs)
-handleDataOnlyL msgType handleData = listenerConv $ \__ourVerInfo nodeId sendActions conv ->
+handleDataOnlyL enqueue mkMsg handleData = listenerConv $ \__ourVerInfo nodeId conv ->
     -- First binding is to inform GHC that the send type is Void.
-    let _ = send conv :: Void -> m ()
+    let msg :: Set NodeId -> Msg
+        msg = mkMsg (OriginForward nodeId)
+        _ = send conv :: Void -> m ()
         handlingLoop = do
             mbMsg <- recvLimited conv
             whenJust mbMsg $ \DataMsg{..} -> do
-                ifM (handleData sendActions nodeId dmContents)
-                    (void $ propagateData sendActions (forwardMsg nodeId) $ DataOnlyPM msgType dmContents)
+                ifM (handleData nodeId dmContents)
+                    (void $ propagateData enqueue $ DataOnlyPM msg dmContents)
                     (logUseless dmContents)
                 handlingLoop
     in handlingLoop
@@ -175,19 +176,19 @@ handleDataDo
        , Message Void
        )
     => NodeId
-    -> MsgType
-    -> SendActions m
+    -> (Origin NodeId -> Set NodeId -> Msg)
+    -> EnqueueMsg m
     -> (contents -> m key)
     -> (contents -> m Bool)
     -> contents
     -> m ()
-handleDataDo provenance msgType sendActions contentsToKey handleData dmContents = do
+handleDataDo provenance mkMsg enqueue contentsToKey handleData dmContents = do
     dmKey <- contentsToKey dmContents
     ifM (handleData dmContents)
         -- IMPORTANT that we propagate it asynchronously.
-        -- enqueueConversation can do that: simply don't force the values in
+        -- enqueueMsg can do that: simply don't force the values in
         -- the resulting map.
-        (void $ propagateData sendActions (forwardMsg provenance) $ InvReqDataPM msgType dmKey dmContents) $
+        (void $ propagateData enqueue $ InvReqDataPM (mkMsg (OriginForward provenance)) dmKey dmContents) $
             logDebug $ sformat
                 ("Ignoring data "%build%" for key "%build) dmContents dmKey
 
@@ -197,11 +198,10 @@ relayMsg
        , Message Void
        , MonadDiscovery m
        )
-    => SendActions m
-    -> (MsgType -> Msg)
+    => EnqueueMsg m
     -> PropagationMsg
     -> m ()
-relayMsg sendActions mkMsg pm = void $ propagateData sendActions mkMsg pm >>= waitForConversations
+relayMsg enqueue pm = void $ propagateData enqueue pm >>= waitForConversations
 
 -- | Asynchronously propagate data.
 propagateData
@@ -210,20 +210,19 @@ propagateData
        , MonadDiscovery m
        , Message Void
        )
-    => SendActions m
-    -> (MsgType -> Msg)
+    => EnqueueMsg m
     -> PropagationMsg
     -> m (Map NodeId (m ()))
-propagateData sendActions mkMsg pm = case pm of
-    InvReqDataPM msgType key contents -> do
+propagateData enqueue pm = case pm of
+    InvReqDataPM msg key contents -> do
         logDebug $ sformat
             ("Propagation data with key: "%build) key
-        converseToNeighbors sendActions (mkMsg msgType) $ \__node ->
+        converseToNeighbors enqueue msg $ \__node ->
             pure $ Conversation $ irdHandler key contents
-    DataOnlyPM msgType contents -> do
+    DataOnlyPM msg contents -> do
         logDebug $ sformat
             ("Propagation data: "%build) contents
-        converseToNeighbors sendActions (mkMsg msgType) $ \__node ->
+        converseToNeighbors enqueue msg $ \__node ->
             pure $ Conversation $ doHandler contents
 
   where
@@ -279,13 +278,13 @@ relayListenersOne
      , Message Void
      , MonadDiscovery m
      )
-  => Relay m -> MkListeners m
-relayListenersOne (InvReqData mP irdP@InvReqDataParams{..}) =
+  => EnqueueMsg m -> Relay m -> MkListeners m
+relayListenersOne enqueue (InvReqData mP irdP@InvReqDataParams{..}) =
     constantListeners $
-    [handleReqL handleReq, invDataListener irdP] ++ handleMempoolL mP
-relayListenersOne (Data DataParams{..}) =
+    [handleReqL handleReq, invDataListener enqueue irdP] ++ handleMempoolL mP
+relayListenersOne enqueue (Data DataParams{..}) =
     constantListeners $
-    [handleDataOnlyL dataMsgType handleDataOnly]
+    [handleDataOnlyL enqueue dataMsgType (handleDataOnly enqueue)]
 
 relayListeners
   :: forall ctx m.
@@ -295,8 +294,8 @@ relayListeners
      , MonadDiscovery m
      , Message Void
      )
-  => [Relay m] -> MkListeners m
-relayListeners = mconcat . map relayListenersOne
+  => EnqueueMsg m -> [Relay m] -> MkListeners m
+relayListeners enqueue = mconcat . map (relayListenersOne enqueue)
 
 invDataListener
   :: forall key contents ctx m.
@@ -313,9 +312,10 @@ invDataListener
      , MonadDiscovery m
      , Message Void
      )
-  => InvReqDataParams key contents m
+  => EnqueueMsg m
+  -> InvReqDataParams key contents m
   -> (ListenerSpec m, OutSpecs)
-invDataListener InvReqDataParams{..} = listenerConv $ \__ourVerInfo nodeId sendActions conv ->
+invDataListener enqueue InvReqDataParams{..} = listenerConv $ \__ourVerInfo nodeId conv ->
     let handlingLoop = do
             inv' <- recvLimited conv
             whenJust inv' $ expectInv $ \InvMsg{..} -> do
@@ -324,7 +324,7 @@ invDataListener InvReqDataParams{..} = listenerConv $ \__ourVerInfo nodeId sendA
                     send conv $ ReqMsg ne
                     dt' <- recvLimited conv
                     whenJust dt' $ expectData $ \DataMsg{..} -> do
-                          handleDataDo nodeId invReqMsgType sendActions contentsToKey (handleData nodeId) dmContents
+                          handleDataDo nodeId invReqMsgType enqueue contentsToKey (handleData nodeId) dmContents
                           -- handlingLoop
 
                           -- TODO CSL-1148 Improve relaing: support multiple data
@@ -384,9 +384,9 @@ invReqDataFlowNeighborsTK
        , Bi (InvOrData (Tagged contents key) contents)
        , Bi (ReqMsg (Tagged contents key))
        )
-    => Text -> SendActions m -> MsgType -> key -> contents -> m ()
-invReqDataFlowNeighborsTK what sendActions msgType key dt =
-    invReqDataFlowNeighbors what sendActions msgType key' dt
+    => Text -> EnqueueMsg m -> (Set NodeId -> Msg) -> key -> contents -> m ()
+invReqDataFlowNeighborsTK what enqueue mkMsg key dt =
+    invReqDataFlowNeighbors what enqueue mkMsg key' dt
   where
     contProxy = (const Proxy :: contents -> Proxy contents) dt
     key' = tagWith contProxy key
@@ -402,9 +402,9 @@ invReqDataFlowTK
        , Bi (InvOrData (Tagged contents key) contents)
        , Bi (ReqMsg (Tagged contents key))
        )
-    => Text -> SendActions m -> MsgType -> NodeId -> key -> contents -> m ()
-invReqDataFlowTK what sendActions msgType addr key dt =
-    invReqDataFlow what sendActions msgType addr key' dt
+    => Text -> EnqueueMsg m -> Msg -> key -> contents -> m ()
+invReqDataFlowTK what enqueue msg key dt =
+    invReqDataFlow what enqueue msg key' dt
   where
     contProxy = (const Proxy :: contents -> Proxy contents) dt
     key' = tagWith contProxy key
@@ -420,9 +420,9 @@ invReqDataFlowNeighbors
        , Bi (InvOrData key contents)
        , Bi (ReqMsg key)
        )
-    => Text -> SendActions m -> MsgType -> key -> contents -> m ()
-invReqDataFlowNeighbors what sendActions msgType key dt = handleAll handleE $
-    void $ converseToNeighbors sendActions (sendMsg msgType) (pure . Conversation . invReqDataFlowDo what key dt) >>= waitForConversations
+    => Text -> EnqueueMsg m -> (Set NodeId -> Msg) -> key -> contents -> m ()
+invReqDataFlowNeighbors what enqueue mkMsg key dt = handleAll handleE $
+    void $ converseToNeighbors enqueue mkMsg (pure . Conversation . invReqDataFlowDo what key dt) >>= waitForConversations
   where
     handleE e = logWarning $
         sformat ("Error sending "%stext%", key = "%build%" to neighbors: "%shown) what key e
@@ -437,14 +437,15 @@ invReqDataFlow
        , MinRelayWorkMode m
        , MonadGState m
        )
-    => Text -> SendActions m -> MsgType -> NodeId -> key -> contents -> m ()
-invReqDataFlow what sendActions msgType addr key dt = handleAll handleE $
-    void $ enqueueConversation' sendActions (S.singleton addr) (sendMsg msgType) $
-        \_ _ -> pure $ Conversation $ invReqDataFlowDo what key dt addr
+    => Text -> EnqueueMsg m -> Msg -> key -> contents -> m ()
+invReqDataFlow what enqueue msg key dt = handleAll handleE $ do
+    its <- enqueue msg $
+        \addr _ -> pure $ Conversation $ invReqDataFlowDo what key dt addr
+    void $ waitForConversations its
   where
     handleE e = logWarning $
-        sformat ("Error sending "%stext%", key = "%build%" to "%shown%": "%shown)
-                what key addr e
+        sformat ("Error sending "%stext%", key = "%build%": "%shown)
+                what key e
 
 invReqDataFlowDo
     :: ( Message (InvOrData key contents)
@@ -481,13 +482,14 @@ dataFlow
        , MinRelayWorkMode m
        , Message Void
        )
-    => Text -> SendActions m -> MsgType -> NodeId -> contents -> m ()
-dataFlow what sendActions msgType addr dt = handleAll handleE $
-    void $ enqueueConversation' sendActions (S.singleton addr) (sendMsg msgType) $
+    => Text -> EnqueueMsg m -> Msg -> contents -> m ()
+dataFlow what enqueue msg dt = handleAll handleE $ do
+    its <- enqueue msg $
         \_ _ -> pure $ Conversation $ \(conv :: ConversationActions (DataMsg contents) Void m) ->
             send conv $ DataMsg dt
+    void $ waitForConversations its
   where
     handleE e =
         logWarning $
-        sformat ("Error sending "%stext%", data = "%build%" to "%shown%": "%shown)
-                what dt addr e
+        sformat ("Error sending "%stext%", data = "%build%": "%shown)
+                what dt e
