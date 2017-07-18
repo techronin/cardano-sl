@@ -15,8 +15,7 @@ module Pos.Network.Types
     ) where
 
 import           Universum
-import           Network.Broadcast.OutboundQueue (Origin (..))
-import           Network.Broadcast.OutboundQueue.Classification
+import           Network.Broadcast.OutboundQueue.Types
 import           Node.Internal (NodeId (..))
 
 -- | Information about the network in which a node participates.

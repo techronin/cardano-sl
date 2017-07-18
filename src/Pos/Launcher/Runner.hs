@@ -27,7 +27,7 @@ import           Mockable                        (MonadMockable, Production (..)
                                                   killThread, Throw, throw, Mockable,
                                                   async, cancel)
 import qualified Network.Broadcast.OutboundQueue as OQ
-import           Network.Broadcast.OutboundQueue.Classification (FormatMsg (..))
+import           Network.Broadcast.OutboundQueue.Types (FormatMsg (..))
 import           Node                            (Node, NodeAction (..), NodeEndPoint,
                                                   ReceiveDelay, Statistics,
                                                   defaultNodeEnvironment,
@@ -199,7 +199,7 @@ oqEnqueue
     -> (NodeId -> VerInfo -> N.Conversation PackingType m t)
     -> m (Map NodeId (m t))
 oqEnqueue oq msgType k = do
-    itList <- OQ.enqueue oq msgType (EnqueuedConversation (msgType, k)) mempty
+    itList <- OQ.enqueue oq msgType (EnqueuedConversation (msgType, k))
     let itMap = M.fromList itList
     return ((>>= either throw return) <$> itMap)
 
@@ -221,12 +221,15 @@ initQueue
     -> m (OQ m')
 initQueue NetworkConfig{..} =
     -- TODO: Find better self identifier (for improved logging)
-    OQ.new ("self" :: String) enqueuePolicy dequeuePolicy failurePolicy
+    OQ.new ("self" :: String) enqueuePolicy dequeuePolicy failurePolicy classification
   where
     ourNodeType = ncNodeType
     enqueuePolicy = OQ.defaultEnqueuePolicy ourNodeType
     dequeuePolicy = OQ.defaultDequeuePolicy ourNodeType
     failurePolicy = OQ.defaultFailurePolicy ourNodeType
+    -- TODO use NetworkConfig to make a static classification
+    -- TODO make that classification dynamic?
+    classification = mempty
 
 runServer
     :: forall m t b .
