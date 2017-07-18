@@ -29,7 +29,6 @@ module Pos.Communication.Relay.Logic
 
 import           Data.Aeson.TH                      (defaultOptions, deriveJSON)
 import           Data.Proxy                         (asProxyTypeOf)
-import qualified Data.Set                           as S
 import           Data.Tagged                        (Tagged, tagWith)
 import           Data.Typeable                      (typeRep)
 import           Formatting                         (build, sformat, shown, stext, (%))
@@ -59,8 +58,6 @@ import           Pos.Communication.Relay.Util       (expectData, expectInv)
 import           Pos.Communication.Types.Relay      (DataMsg (..), InvMsg (..), InvOrData,
                                                      MempoolMsg (..), ReqMsg (..))
 import           Pos.DB.Class                       (MonadGState)
-import           Pos.Discovery.Broadcast            (converseToNeighbors)
-import           Pos.Discovery.Class                (MonadDiscovery)
 import           Pos.Util.TimeWarp                  (CanJsonLog (..))
 
 type MinRelayWorkMode m =
@@ -139,15 +136,14 @@ handleDataOnlyL
        , RelayWorkMode ctx m
        , MonadGState m
        , MessageLimited (DataMsg contents)
-       , MonadDiscovery m
        )
     => EnqueueMsg m
-    -> (Origin NodeId -> Set NodeId -> Msg)
+    -> (Origin NodeId -> Msg)
     -> (NodeId -> contents -> m Bool)
     -> (ListenerSpec m, OutSpecs)
 handleDataOnlyL enqueue mkMsg handleData = listenerConv $ \__ourVerInfo nodeId conv ->
     -- First binding is to inform GHC that the send type is Void.
-    let msg :: Set NodeId -> Msg
+    let msg :: Msg
         msg = mkMsg (OriginForward nodeId)
         _ = send conv :: Void -> m ()
         handlingLoop = do
@@ -172,11 +168,10 @@ handleDataDo
        , Message (ReqMsg key)
        , Bi (InvOrData key contents)
        , Bi (ReqMsg key)
-       , MonadDiscovery m
        , Message Void
        )
     => NodeId
-    -> (Origin NodeId -> Set NodeId -> Msg)
+    -> (Origin NodeId -> Msg)
     -> EnqueueMsg m
     -> (contents -> m key)
     -> (contents -> m Bool)
@@ -196,7 +191,6 @@ handleDataDo provenance mkMsg enqueue contentsToKey handleData dmContents = do
 relayMsg
     :: ( RelayWorkMode ctx m
        , Message Void
-       , MonadDiscovery m
        )
     => EnqueueMsg m
     -> PropagationMsg
@@ -207,7 +201,6 @@ relayMsg enqueue pm = void $ propagateData enqueue pm >>= waitForConversations
 propagateData
     :: forall ctx m.
        ( RelayWorkMode ctx m
-       , MonadDiscovery m
        , Message Void
        )
     => EnqueueMsg m
@@ -217,12 +210,12 @@ propagateData enqueue pm = case pm of
     InvReqDataPM msg key contents -> do
         logDebug $ sformat
             ("Propagation data with key: "%build) key
-        converseToNeighbors enqueue msg $ \__node ->
+        enqueue msg $ \__node _ ->
             pure $ Conversation $ irdHandler key contents
     DataOnlyPM msg contents -> do
         logDebug $ sformat
             ("Propagation data: "%build) contents
-        converseToNeighbors enqueue msg $ \__node ->
+        enqueue msg $ \__node _ ->
             pure $ Conversation $ doHandler contents
 
   where
@@ -276,7 +269,6 @@ relayListenersOne
      , RelayWorkMode ctx m
      , MonadGState m
      , Message Void
-     , MonadDiscovery m
      )
   => EnqueueMsg m -> Relay m -> MkListeners m
 relayListenersOne enqueue (InvReqData mP irdP@InvReqDataParams{..}) =
@@ -291,7 +283,6 @@ relayListeners
      ( WithLogger m
      , RelayWorkMode ctx m
      , MonadGState m
-     , MonadDiscovery m
      , Message Void
      )
   => EnqueueMsg m -> [Relay m] -> MkListeners m
@@ -309,7 +300,6 @@ invDataListener
      , Buildable key
      , Eq key
      , MessageLimited (DataMsg contents)
-     , MonadDiscovery m
      , Message Void
      )
   => EnqueueMsg m
@@ -380,13 +370,12 @@ invReqDataFlowNeighborsTK
        , Typeable contents
        , MinRelayWorkMode m
        , MonadGState m
-       , MonadDiscovery m
        , Bi (InvOrData (Tagged contents key) contents)
        , Bi (ReqMsg (Tagged contents key))
        )
-    => Text -> EnqueueMsg m -> (Set NodeId -> Msg) -> key -> contents -> m ()
-invReqDataFlowNeighborsTK what enqueue mkMsg key dt =
-    invReqDataFlowNeighbors what enqueue mkMsg key' dt
+    => Text -> EnqueueMsg m -> Msg -> key -> contents -> m ()
+invReqDataFlowNeighborsTK what enqueue msg key dt =
+    invReqDataFlowNeighbors what enqueue msg key' dt
   where
     contProxy = (const Proxy :: contents -> Proxy contents) dt
     key' = tagWith contProxy key
@@ -416,13 +405,12 @@ invReqDataFlowNeighbors
        , Buildable key
        , MinRelayWorkMode m
        , MonadGState m
-       , MonadDiscovery m
        , Bi (InvOrData key contents)
        , Bi (ReqMsg key)
        )
-    => Text -> EnqueueMsg m -> (Set NodeId -> Msg) -> key -> contents -> m ()
-invReqDataFlowNeighbors what enqueue mkMsg key dt = handleAll handleE $
-    void $ converseToNeighbors enqueue mkMsg (pure . Conversation . invReqDataFlowDo what key dt) >>= waitForConversations
+    => Text -> EnqueueMsg m -> Msg -> key -> contents -> m ()
+invReqDataFlowNeighbors what enqueue msg key dt = handleAll handleE $
+    void $ enqueue msg (\addr _ -> pure (Conversation (invReqDataFlowDo what key dt addr))) >>= waitForConversations
   where
     handleE e = logWarning $
         sformat ("Error sending "%stext%", key = "%build%" to neighbors: "%shown) what key e

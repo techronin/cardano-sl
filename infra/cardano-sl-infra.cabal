@@ -37,7 +37,6 @@ library
                         Pos.Slotting.Util
 
                         Pos.Discovery
-                        Pos.Discovery.Broadcast
                         Pos.Discovery.Class
                         Pos.Discovery.Holders
 

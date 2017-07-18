@@ -17,7 +17,7 @@ import           Pos.Binary.Class               (Bi)
 import           Pos.Communication.Limits.Types (MessageLimited)
 import           Pos.Communication.Types.Relay  (DataMsg, InvMsg, InvOrData, MempoolMsg,
                                                  ReqMsg (..))
-import           Pos.Communication.Types.Protocol (NodeId, SendActions, Msg, EnqueueMsg)
+import           Pos.Communication.Types.Protocol (NodeId, Msg, EnqueueMsg)
 import           Pos.Network.Types              (Origin)
 
 -- | Data for general Inv/Req/Dat framework
@@ -57,7 +57,7 @@ data MempoolParams m where
       ) => Proxy tag -> m [key] -> MempoolParams m
 
 data InvReqDataParams key contents m = InvReqDataParams
-    { invReqMsgType :: !(Origin NodeId -> Set NodeId -> Msg)
+    { invReqMsgType :: !(Origin NodeId -> Msg)
     , contentsToKey :: contents -> m key
       -- ^ Get key for given contents.
     , handleInv     :: NodeId -> key -> m Bool
@@ -69,7 +69,7 @@ data InvReqDataParams key contents m = InvReqDataParams
     }
 
 data DataParams contents m = DataParams
-    { dataMsgType    :: !(Origin NodeId -> Set NodeId -> Msg)
+    { dataMsgType    :: !(Origin NodeId -> Msg)
     , handleDataOnly :: EnqueueMsg m -> NodeId -> contents -> m Bool
       -- ^ Handle data msg and return True if message is to be propagated
       -- FIXME the SendActions shouldn't be there. It is for the benefit of

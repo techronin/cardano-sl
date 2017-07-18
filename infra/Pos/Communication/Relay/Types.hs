@@ -30,7 +30,7 @@ data PropagationMsg where
         , Eq key
         , Message (ReqMsg key)
         , Bi (ReqMsg key))
-        => !(Set NodeId -> Msg)
+        => !Msg
         -> !key
         -> !contents
         -> PropagationMsg
@@ -38,7 +38,7 @@ data PropagationMsg where
         ( Message (DataMsg contents)
         , Bi (DataMsg contents)
         , Buildable contents)
-        => !(Set NodeId -> Msg)
+        => !Msg
         -> !contents
         -> PropagationMsg
 

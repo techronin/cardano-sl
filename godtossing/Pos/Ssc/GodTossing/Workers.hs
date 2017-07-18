@@ -144,7 +144,7 @@ checkNSendOurCert sendActions = do
             ourVssCertificate <- getOurVssCertificate slot
             let contents = MCVssCertificate ourVssCertificate
             sscProcessOurMessage (sscProcessCertificate ourVssCertificate)
-            invReqDataFlowNeighborsTK "ssc" (enqueueMsg sendActions) (const (MsgMPC OriginSender)) ourId contents
+            invReqDataFlowNeighborsTK "ssc" (enqueueMsg sendActions) (MsgMPC OriginSender) ourId contents
             logDebug "Announced our VssCertificate."
 
     slMaybe <- getCurrentSlot
@@ -293,7 +293,7 @@ sendOurData enqueue msgTag ourId dt epoch slMultiplier = do
     -- type of message.
     waitUntilSend msgTag epoch slMultiplier
     logInfo $ sformat ("Announcing our "%build) msgTag
-    invReqDataFlowNeighborsTK "ssc" enqueue (const (MsgMPC OriginSender)) ourId dt
+    invReqDataFlowNeighborsTK "ssc" enqueue (MsgMPC OriginSender) ourId dt
     logDebug $ sformat ("Sent our " %build%" to neighbors") msgTag
 
 -- Generate new commitment and opening and use them for the current

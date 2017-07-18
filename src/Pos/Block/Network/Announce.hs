@@ -30,7 +30,6 @@ import           Pos.Core                   (headerHash, prevBlockL)
 import           Pos.Crypto                 (shortHashF)
 import qualified Pos.DB.Block               as DB
 import qualified Pos.DB.DB                  as DB
-import           Pos.Discovery              (converseToNeighbors)
 import           Pos.Security               (AttackType (..), NodeAttackedError (..),
                                              SecurityParams (..), shouldIgnoreAddress)
 import           Pos.Util.TimeWarp          (nodeIdToAddress)
@@ -46,7 +45,7 @@ announceBlock
     => EnqueueMsg m -> MainBlockHeader ssc -> m (Map NodeId (m ()))
 announceBlock enqueue header = do
     logDebug $ sformat ("Announcing header to others:\n"%build) header
-    converseToNeighbors enqueue (\_ -> MsgAnnounceBlockHeader OriginSender) announceBlockDo
+    enqueue (MsgAnnounceBlockHeader OriginSender) (\addr _ -> announceBlockDo addr)
   where
     announceBlockDo nodeId = pure $ Conversation $ \cA -> do
         SecurityParams{..} <- view (lensOf @SecurityParams)

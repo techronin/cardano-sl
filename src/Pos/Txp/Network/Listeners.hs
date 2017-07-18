@@ -39,7 +39,7 @@ txInvReqDataParams :: WorkMode ssc ctx m
     => InvReqDataParams (Tagged TxMsgContents TxId) TxMsgContents m
 txInvReqDataParams =
     InvReqDataParams
-       { invReqMsgType = \origin _ -> MsgTransaction origin
+       { invReqMsgType = MsgTransaction
        , contentsToKey = txContentsToKey
        , handleInv = \_ -> txHandleInv
        , handleReq = \_ -> txHandleReq

@@ -65,7 +65,6 @@ import           Pos.Core                   (HasHeaderHash (..), HeaderHash, gbH
 import           Pos.Crypto                 (shortHashF)
 import           Pos.DB.Block               (blkGetHeader)
 import qualified Pos.DB.DB                  as DB
-import           Pos.Discovery              (converseToNeighbors)
 import           Pos.Exception              (cardanoExceptionFromException,
                                              cardanoExceptionToException)
 import           Pos.Reporting.Methods      (reportMisbehaviourSilent)
@@ -115,7 +114,7 @@ triggerRecovery :: forall ssc ctx m.
     => EnqueueMsg m -> m ()
 triggerRecovery enqueue = unlessM recoveryInProgress $ do
     logDebug "Recovery triggered, requesting tips from neighbors"
-    void (converseToNeighbors enqueue (\_ -> MsgRequestBlockHeaders) (pure . Conversation . requestTip) >>= waitForConversations) `catch`
+    void (enqueue MsgRequestBlockHeaders (\addr _ -> pure (Conversation (requestTip addr))) >>= waitForConversations) `catch`
         \(e :: SomeException) -> do
            logDebug ("Error happened in triggerRecovery: " <> show e)
            throwM e
