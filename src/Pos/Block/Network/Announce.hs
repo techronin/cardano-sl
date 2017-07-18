@@ -23,9 +23,8 @@ import           Pos.Block.Network.Types    (MsgGetHeaders (..), MsgHeaders (..)
 import           Pos.Communication.Limits   (recvLimited)
 import           Pos.Communication.Message  ()
 import           Pos.Communication.Protocol (Conversation (..), ConversationActions (..),
-                                             OutSpecs, EnqueueMsg, convH,
-                                             toOutSpecs, waitForConversations,
-                                             MsgType (..), Origin (..))
+                                             OutSpecs, EnqueueMsg, convH, NodeId,
+                                             toOutSpecs, MsgType (..), Origin (..))
 import           Pos.Context                (recoveryInProgress)
 import           Pos.Core                   (headerHash, prevBlockL)
 import           Pos.Crypto                 (shortHashF)
@@ -44,10 +43,10 @@ announceBlockOuts = toOutSpecs [convH (Proxy :: Proxy (MsgHeaders ssc))
 
 announceBlock
     :: WorkMode ssc ctx m
-    => EnqueueMsg m -> MainBlockHeader ssc -> m ()
+    => EnqueueMsg m -> MainBlockHeader ssc -> m (Map NodeId (m ()))
 announceBlock enqueue header = do
     logDebug $ sformat ("Announcing header to others:\n"%build) header
-    void $ converseToNeighbors enqueue (\_ -> MsgAnnounceBlockHeader OriginSender) announceBlockDo >>= waitForConversations
+    converseToNeighbors enqueue (\_ -> MsgAnnounceBlockHeader OriginSender) announceBlockDo
   where
     announceBlockDo nodeId = pure $ Conversation $ \cA -> do
         SecurityParams{..} <- view (lensOf @SecurityParams)

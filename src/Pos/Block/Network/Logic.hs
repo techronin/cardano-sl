@@ -32,7 +32,6 @@ import qualified Data.Text.Buildable        as B
 import           Ether.Internal             (HasLens (..))
 import           Formatting                 (bprint, build, builder, sformat, shown,
                                              stext, (%))
-import           Mockable                   (fork)
 import           Serokell.Data.Memory.Units (unitBuilder)
 import           Serokell.Util.Text         (listJson)
 import           Serokell.Util.Verify       (VerificationRes (..), formatFirstError)
@@ -541,7 +540,7 @@ relayBlock enqueue (Right mainBlk) = do
         True -> logDebug "Not relaying block in recovery mode"
         False -> do
             logDebug $ sformat ("Calling announceBlock for "%build%".") (mainBlk ^. gbHeader)
-            void $ fork $ announceBlock enqueue $ mainBlk ^. gbHeader
+            void $ announceBlock enqueue $ mainBlk ^. gbHeader
 
 ----------------------------------------------------------------------------
 -- Common logging / logic sink points

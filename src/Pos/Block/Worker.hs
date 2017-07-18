@@ -14,7 +14,7 @@ import           Universum
 import           Control.Lens                (ix)
 import qualified Data.List.NonEmpty          as NE
 import           Formatting                  (bprint, build, fixed, sformat, shown, (%))
-import           Mockable                    (concurrently, delay, fork)
+import           Mockable                    (concurrently, delay)
 import           Serokell.Util               (listJson, pairF, sec)
 import           System.Wlog                 (logDebug, logInfo, logWarning)
 
@@ -215,7 +215,7 @@ onNewSlotWhenLeader slotId pske sendActions = do
             logInfoS $
                 sformat ("Created a new block:\n" %build) createdBlk
             jsonLog $ jlCreatedBlock (Right createdBlk)
-            void $ fork $ announceBlock (enqueueMsg sendActions) $ createdBlk ^. gbHeader
+            void $ announceBlock (enqueueMsg sendActions) $ createdBlk ^. gbHeader
     whenNotCreated = logWarningS . (mappend "I couldn't create a new block: ")
 
 ----------------------------------------------------------------------------
