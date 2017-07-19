@@ -55,12 +55,8 @@ targets="cardano-sl cardano-sl-lwallet cardano-sl-tools"
 #done
 
 for trgt in $targets; do
-
-    stack --nix --no-terminal --local-bin-path daedalus/ install "$trgt" \
-      $EXTRA_STACK --fast --jobs=2 \
-      --ghc-options="-j -DCONFIG=$DCONFIG +RTS -A128m -n2m -RTS" \
-      --flag cardano-sl-core:-asserts \
-      --flag cardano-sl-core:-dev-mode
+  echo building $trgt with nix
+  nix-build -A $trgt -o $trgt.root --argstr dconfig $DCONFIG
 #    TODO: CSL-1133
 #    if [[ "$trgt" == "cardano-sl" ]]; then
 #      stack test --nix --fast --jobs=2 --coverage \
@@ -76,7 +72,8 @@ done
   #./update-haddock.sh
 #fi
 
-stack exec --nix -- cardano-wallet-hs2purs
+./cardano-sl-tools.root/bin/cardano-wallet-hs2purs
+exit 0
 
 pushd daedalus
   nix-shell --run "npm install && npm run build:prod"
