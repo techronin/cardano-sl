@@ -215,15 +215,12 @@ initQueue
     -> m (OQ m')
 initQueue NetworkConfig{..} =
     -- TODO: Find better self identifier (for improved logging)
-    OQ.new ("self" :: String) enqueuePolicy dequeuePolicy failurePolicy classification
+    OQ.new ("self" :: String) enqueuePolicy dequeuePolicy failurePolicy
   where
     ourNodeType = ncNodeType
     enqueuePolicy = OQ.defaultEnqueuePolicy ourNodeType
     dequeuePolicy = OQ.defaultDequeuePolicy ourNodeType
     failurePolicy = OQ.defaultFailurePolicy ourNodeType
-    -- TODO use NetworkConfig to make a static classification
-    -- TODO make that classification dynamic?
-    classification = mempty
 
 runServer
     :: forall m t b .
@@ -264,4 +261,3 @@ runServer NetworkConfig {..} mkTransport mkReceiveDelay mkL (OutSpecs wouts) wit
         stopDequeue
         afterNode other
     mkConnectDelay = const (pure Nothing)
-

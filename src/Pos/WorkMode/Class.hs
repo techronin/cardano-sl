@@ -38,7 +38,7 @@ import           Pos.Explorer.Txp.Toil       (ExplorerExtra)
 #endif
 import           Pos.Core                    (HasPrimaryKey)
 import           Pos.Launcher.Param          (RelayParams)
-import           Pos.Subscription            (MonadSubscription)
+import           Pos.KnownPeers              (MonadKnownPeers)
 import           Pos.Recovery.Info           (MonadRecoveryInfo)
 import           Pos.Reporting               (HasReportingContext)
 import           Pos.Security.Params         (SecurityParams)
@@ -85,7 +85,7 @@ type WorkMode ssc ctx m
       , MonadBListener m
       , MonadDiscovery m
       , MonadReader ctx m
-      , MonadSubscription m
+      , MonadKnownPeers m
       , HasLens StartTime ctx StartTime
       , HasLens BlkSemaphore ctx BlkSemaphore
       , HasLens LrcContext ctx LrcContext

@@ -59,8 +59,8 @@ library
                         Pos.Generator.Block
                         Pos.Generator.BlockEvent
 
-                        -- Subscription
-                        Pos.Subscription
+                        -- Known peers
+                        Pos.KnownPeers
 
                         -- Genesis data
                         Pos.Genesis

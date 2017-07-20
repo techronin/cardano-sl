@@ -56,7 +56,7 @@ import           Pos.Slotting.MemState         (HasSlottingVar (..), MonadSlotsD
                                                 putSlottingDataDefault,
                                                 waitPenultEpochEqualsDefault)
 import           Pos.Ssc.Class.Types           (HasSscContext (..), SscBlock)
-import           Pos.Subscription              (MonadSubscription (..))
+import           Pos.KnownPeers                (MonadKnownPeers (..))
 import           Pos.Util                      (Some (..))
 import           Pos.Util.JsonLog              (HasJsonLogConfig (..), jsonLogDefault)
 import           Pos.Util.LoggerName           (HasLoggerName' (..), getLoggerNameDefault,
@@ -220,11 +220,10 @@ instance MonadWalletTracking WalletWebMode where
     syncWalletOnImport = syncWalletOnImportWebWallet . one
     txMempoolToModifier = txMempoolToModifierWebWallet
 
-instance MonadSubscription WalletWebMode where
-    subscribe nid = do
+instance MonadKnownPeers WalletWebMode where
+    addKnownPeers peers = do
         oq <- rmcOutboundQ . wwmcRealModeContext <$> ask
-        -- TODO: Properly classify the new node
-        OQ.subscribe oq $ mempty { OQ._peersCore = [[nid]] }
-    unsubscribe nid = do
+        OQ.addKnownPeers oq peers
+    removeKnownPeer nid = do
         oq <- rmcOutboundQ . wwmcRealModeContext <$> ask
-        OQ.unsubscribe oq nid
+        OQ.removeKnownPeer oq nid

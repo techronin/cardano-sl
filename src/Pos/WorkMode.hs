@@ -56,7 +56,7 @@ import           Pos.Discovery               (HasDiscoveryContextSum (..),
                                               MonadDiscovery (..), findPeersSum,
                                               getPeersSum)
 import           Pos.Reporting               (HasReportingContext (..))
-import           Pos.Subscription            (MonadSubscription (..))
+import           Pos.KnownPeers              (MonadKnownPeers (..))
 import           Pos.Shutdown                (HasShutdownContext (..))
 import           Pos.Slotting.Class          (MonadSlots (..))
 import           Pos.Slotting.Impl.Sum       (currentTimeSlottingSum,
@@ -218,11 +218,10 @@ instance SscHelpersClass ssc =>
          MonadBlockDBGenericWrite (BlockHeader ssc) (Block ssc) Undo (RealMode ssc) where
     dbPutBlund = dbPutBlundDefault
 
-instance MonadSubscription (RealMode ssc) where
-    subscribe nid = do
+instance MonadKnownPeers (RealMode ssc) where
+    addKnownPeers peers = do
         oq <- rmcOutboundQ <$> ask
-        -- TODO: Properly classify the new node
-        OQ.subscribe oq $ mempty { OQ._peersCore = [[nid]] }
-    unsubscribe nid = do
+        OQ.addKnownPeers oq peers
+    removeKnownPeer nid = do
         oq <- rmcOutboundQ <$> ask
-        OQ.unsubscribe oq nid
+        OQ.removeKnownPeer oq nid

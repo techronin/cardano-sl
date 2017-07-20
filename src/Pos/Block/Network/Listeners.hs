@@ -7,10 +7,13 @@ module Pos.Block.Network.Listeners
        ) where
 
 import           Formatting                 (build, sformat, (%))
-import qualified Mockable.Exception         as M (bracket)
+import qualified Mockable.Exception         as M (bracket_)
 import           Serokell.Util.Text         (listJson)
 import           System.Wlog                (logDebug, logWarning)
 import           Universum
+
+import qualified Network.Broadcast.OutboundQueue       as OQ
+import qualified Network.Broadcast.OutboundQueue.Types as OQ
 
 import           Pos.Binary.Communication   ()
 import           Pos.Block.Logic            (getHeadersFromToIncl)
@@ -25,7 +28,7 @@ import           Pos.Communication.Protocol (ConversationActions (..), ListenerS
                                              MkListeners, OutSpecs, constantListeners)
 import qualified Pos.DB.Block               as DB
 import           Pos.DB.Error               (DBError (DBMalformed))
-import           Pos.Subscription           (MonadSubscription(..))
+import           Pos.KnownPeers             (MonadKnownPeers(..))
 import           Pos.Ssc.Class              (SscWorkersClass)
 import           Pos.Util.Chrono            (NewestFirst (..))
 import           Pos.WorkMode.Class         (WorkMode)
@@ -109,7 +112,11 @@ handleSubscription
     => (ListenerSpec m, OutSpecs)
 handleSubscription = listenerConv @Void $ \__ourVerInfo nodeId conv -> do
     mbMsg <- recvLimited conv
-    whenJust mbMsg $ \MsgSubscribe -> 
-      bracket_ (subscribe nodeId)
-               (unsubscribe nodeId)
-               (void $ recvLimited conv) -- wait for the conv to terminate
+    whenJust mbMsg $ \MsgSubscribe -> do
+      -- TODO: Should we change this so that MsgSubscribe carries the node type?
+      -- In particular, for the "transitional" mode where Kademia nodes
+      -- use this subscription mechanism too?
+      let peers = OQ.simplePeers [(OQ.NodeEdge, nodeId)]
+      M.bracket_ (addKnownPeers peers)
+                 (removeKnownPeer nodeId)
+                 (void $ recvLimited conv)
