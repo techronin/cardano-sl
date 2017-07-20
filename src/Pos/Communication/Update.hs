@@ -11,8 +11,7 @@ import           Universum
 
 import           Pos.Binary                 ()
 import           Pos.Communication.Methods  (sendUpdateProposal, sendVote)
-import           Pos.Communication.Protocol (NodeId, EnqueueMsg,
-                                             immediateConcurrentConversations)
+import           Pos.Communication.Protocol (EnqueueMsg)
 import           Pos.Crypto                 (SafeSigner, SignTag (SignUSVote), hash,
                                              safeSign, safeToPublic)
 import           Pos.DB.Class               (MonadGState)

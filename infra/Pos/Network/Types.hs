@@ -16,7 +16,8 @@ module Pos.Network.Types
 import           Universum
 import           Network.Broadcast.OutboundQueue.Types
 import           Node.Internal (NodeId (..))
-import           Pos.Network.Yaml (DnsDomains(..))
+import           Pos.Network.Yaml (DnsDomains (..))
+import           Pos.DHT.Real.Param (KademliaParams (..))
 
 -- | Information about the network in which a node participates.
 data NetworkConfig = NetworkConfig
@@ -42,22 +43,18 @@ data Topology =
     -- | We discover our peers through Kademlia
     --
     -- This is used for exchanges.
-    --
-    -- TODO: Not sure what parameters we need here; possibly the
-    -- 'NetworkParams' type from 'Pos.Launcher.Param'
-  | TopologyP2P
+  | TopologyP2P !KademliaParams
 
     -- | We discover our peers through Kademlia, and every node in the network
     -- is a core node.
     --
-    -- TODO: Not sure what parameters we need here; see 'TopologyP2P'.
     -- TODO: This is temporary.
-  | TopologyTransitional
+  | TopologyTransitional !KademliaParams
   deriving (Show)
 
 -- | Derive node type from its topology
 topologyNodeType :: Topology -> NodeType
 topologyNodeType (TopologyStatic nodeType _) = nodeType
 topologyNodeType (TopologyBehindNAT _)       = NodeEdge
-topologyNodeType (TopologyP2P)               = NodeEdge
-topologyNodeType (TopologyTransitional)      = NodeCore
+topologyNodeType (TopologyP2P _)             = NodeEdge
+topologyNodeType (TopologyTransitional _)    = NodeCore

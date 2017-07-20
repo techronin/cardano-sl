@@ -50,7 +50,6 @@ import           Pos.Communication               (ActionSpec (..), bipPacking, I
                                                   makeEnqueueMsg, EnqueueMsg)
 import qualified Pos.Constants                   as Const
 import           Pos.Context                     (NodeContext (..))
-import           Pos.DHT.Real                    (foreverRejoinNetwork)
 import           Pos.Launcher.Param              (BaseParams (..), LoggingParams (..),
                                                   NodeParams (..))
 import           Pos.Launcher.Resource           (NodeResources (..), hoistNodeResources)

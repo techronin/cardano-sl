@@ -30,7 +30,7 @@ import           Network.Info             (IPv4 (..), getNetworkInterfaces, ipv4
 import           Network.Wreq             (partFile, partLBS, post)
 import           Pos.ReportServer.Report  (ReportInfo (..), ReportType (..))
 import           Serokell.Util.Exceptions (TextException (..))
-import           Serokell.Util.Text       (listBuilderJSON, listJson)
+import           Serokell.Util.Text       (listBuilderJSON)
 import           System.Directory         (doesFileExist)
 import           System.FilePath          (takeFileName)
 import           System.Info              (arch, os)

@@ -8,15 +8,18 @@ module Pos.DHT.Real.Real
        , stopDHTInstance
        ) where
 
+import           Control.Concurrent.STM    (retry)
 import qualified Data.ByteString.Char8     as B8 (unpack)
 import qualified Data.ByteString.Lazy      as BS
 import           Data.List                 (intersect, (\\))
 import qualified Data.Store                as Store
+import           Data.Time.Clock.POSIX     (getPOSIXTime)
 import           Formatting                (build, int, sformat, shown, (%))
 import           Mockable                  (Async, Catch, Mockable, MonadMockable,
                                             Promise, Throw, catch, catchAll, throw,
                                             waitAnyUnexceptional, withAsync)
 import qualified Network.Kademlia          as K
+import qualified Network.Kademlia.Instance as K (KademliaState (sTree), KademliaInstance (state))
 import           Serokell.Util             (listJson, ms, sec)
 import           System.Directory          (doesFileExist)
 import           System.Wlog               (HasLoggerName (modifyLoggerName), WithLogger,
@@ -120,7 +123,7 @@ rejoinNetwork
     -> m ()
 rejoinNetwork inst = withKademliaLogger $ do
     let init = kdiInitialPeers inst
-    peers <- kademliaGetKnownPeers inst
+    peers <- kademliaGetKnownPeers inst Nothing
     logDebug $ sformat ("rejoinNetwork: peers "%listJson) peers
     when (length peers < neighborsSendThreshold) $ do
         logWarning $ sformat ("Not enough peers: "%int%", threshold is "%int)
@@ -133,6 +136,41 @@ withKademliaLogger
     -> m a
 withKademliaLogger action = modifyLoggerName (<> "kademlia") action
 
+{-
+data KademliaPeersDiff = KademliaPeersDiff
+    { kpdAdd    :: !(Set NetworkAddress)
+    , kpdRemove :: !(Set NetworkAddress)
+    }
+
+kademliaWithPeers
+    :: ( MonadIO m
+       , Mockable Async m
+       , Mockable Catch m
+       , Mockable Throw m
+       , Eq (Promise m (Maybe ()))
+       , WithLogger m
+       , Bi DHTData
+       , Bi DHTKey
+       )
+    => KademliaDHTInstance
+    -> (KademliaPeersDiff -> m ())
+    -> m x
+kademliaWithPeers inst withDiff = go mempty Nothing
+  where
+    go current = do
+        next <- kademliaGetKnownPeers inst current
+        case current of
+            
+        let setNext = Set.fromList next
+            setCurrent = 
+        go (Just next)
+        -}
+        
+
+-- | Return a list of known peers. It will block until that list is not equal
+-- to the list given as the last parameter 'Maybe [NetworkAddress]'. Giving
+-- 'Nothing' means it will return right away.
+--
 -- You can get DHTNode using @toDHTNode@ and Kademlia function @peersToNodeIds@.
 kademliaGetKnownPeers
     :: ( MonadIO m
@@ -145,21 +183,26 @@ kademliaGetKnownPeers
        , Bi DHTKey
        )
     => KademliaDHTInstance
+    -> Maybe [NetworkAddress]
     -> m [NetworkAddress]
-kademliaGetKnownPeers inst = do
+kademliaGetKnownPeers inst current = do
     let kInst = kdiHandle inst
+        treeVar = K.sTree (K.state kInst)
     let initNetAddrs = bool [] (kdiInitialPeers inst) (kdiExplicitInitial inst)
-    buckets <- liftIO (K.viewBuckets $ kInst)
-    extendPeers (kdiKey inst) initNetAddrs buckets
+    -- getPOSIXTime is used in Kademlia to compute the bucket timestampts.
+    timeNow <- liftIO getPOSIXTime
+    liftIO . atomically $ do
+      buckets <- fmap (K.viewBuckets (round timeNow)) (readTVar treeVar)
+      peers <- extendPeers (kdiKey inst) initNetAddrs buckets
+      if Just peers == current then retry else return peers
   where
     extendPeers
-        :: MonadIO m1
-        => DHTKey
+        :: DHTKey
         -> [NetworkAddress]
         -> [[(K.Node DHTKey, Int64)]]
-        -> m1 [NetworkAddress]
+        -> STM [NetworkAddress]
     extendPeers myKey initial buckets = do
-        cache <- atomically $ readTVar $ kdiKnownPeersCache inst
+        cache <- readTVar $ kdiKnownPeersCache inst
         fromBuckets <- updateCache $ concatMap (getPeersFromBucket cache myKey) buckets
          -- Concat with initial peers and select unique.
         pure $ ordNub $ fromBuckets ++ initial
@@ -183,9 +226,9 @@ kademliaGetKnownPeers inst = do
         | length a <= p = a
         | otherwise = take p a
 
-    updateCache :: MonadIO m1 => [NetworkAddress] -> m1 [NetworkAddress]
+    updateCache :: [NetworkAddress] -> STM [NetworkAddress]
     updateCache peers =
-        peers <$ (atomically $ writeTVar (kdiKnownPeersCache inst) peers)
+        peers <$ (writeTVar (kdiKnownPeersCache inst) peers)
 
 toDHTNode :: K.Node DHTKey -> DHTNode
 toDHTNode n = DHTNode (fromKPeer . K.peer $ n) $ K.nodeId n

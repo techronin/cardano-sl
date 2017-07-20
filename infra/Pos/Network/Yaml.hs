@@ -18,7 +18,6 @@ import qualified Data.Aeson.Types      as A
 import qualified Data.ByteString.Char8 as BS.C8
 import qualified Data.HashMap.Lazy     as HM
 import qualified Data.Map.Strict       as M
-import qualified Data.Text             as T
 import qualified Network.DNS           as DNS
 
 -- | Description of the network topology in a Yaml file
@@ -29,8 +28,8 @@ import qualified Network.DNS           as DNS
 data Topology =
     TopologyStatic !AllStaticallyKnownPeers
   | TopologyBehindNAT !DnsDomains
-  | TopologyP2P
-  | TopologyTransitional
+  | TopologyP2P !KademliaParams
+  | TopologyTransitional !KademliaParams
   deriving (Show)
 
 -- | All statically known peers in the newtork
@@ -69,6 +68,30 @@ data NodeMetadata = NodeMetadata
     }
     deriving (Show)
 
+-- | Parameters for Kademlia, in case P2P or transitional topology are used.
+data KademliaParams = KademliaParams
+    { kpId       :: !(Maybe KademliaId)
+      -- ^ Kademlia identifier. Optional; one can be generated for you.
+    , kpPeer     :: !KademliaAddress
+      -- ^ Initial Kademlia peer, for joining the network.
+    , kpAddress  :: !(Maybe KademliaAddress)
+      -- ^ External Kadmelia address.
+    , kpBind     :: !(Maybe KademliaAddress)
+      -- ^ Address at which to bind the Kademlia socket.
+    , kpDumpFile :: !(Maybe FilePath)
+    }
+    deriving (Show)
+
+-- | A Kademlia identifier in text representation (probably base64-url encoded).
+newtype KademliaId = KademliaId Text
+    deriving (Show)
+
+data KademliaAddress = KademliaAddress
+    { kaHost :: !String
+    , kaPort :: !Word16
+    }
+    deriving (Show)
+
 {-------------------------------------------------------------------------------
   FromJSON instances
 -------------------------------------------------------------------------------}
@@ -84,7 +107,7 @@ instance FromJSON NodeRoutes where
 
 instance FromJSON NodeType where
   parseJSON = A.withText "NodeType" $ \typ -> do
-      case T.unpack typ of
+      case toString typ of
         "core"     -> return NodeCore
         "edge"     -> return NodeEdge
         "relay"    -> return NodeRelay
@@ -114,13 +137,19 @@ instance FromJSON Topology where
   parseJSON = A.withObject "Topology" $ \obj -> do
       mNodes  <- obj .:? "nodes"
       mRelays <- obj .:? "relays"
-      case (mNodes, mRelays) of
-        (Just nodes, Nothing)  -> TopologyStatic    <$> parseJSON nodes
-        (Nothing, Just relays) -> TopologyBehindNAT <$> parseJSON relays
-        (Just _, Just _) ->
-          fail "Topology: expected either 'nodes' or 'relays', not both"
-        (Nothing, Nothing) ->
-          fail "Topology: expected 'nodes' or 'relays' field"
+      mP2p    <- obj .:? "p2p"
+      mTrans  <- obj .:? "transitional"
+      case (mNodes, mRelays, mP2p, mTrans) of
+        (Just nodes, Nothing, Nothing, Nothing) ->
+            TopologyStatic <$> parseJSON nodes
+        (Nothing, Just relays, Nothing, Nothing) ->
+            TopologyBehindNAT <$> parseJSON relays
+        (Nothing, Nothing, Just p2p, Nothing) ->
+            TopologyP2P <$> parseJSON p2p
+        (Nothing, Nothing, Nothing, Just transitional) ->
+            TopologyTransitional <$> parseJSON transitional
+        _ ->
+          fail "Topology: expected exactly one of 'nodes', 'relays', 'p2p', 'transitional'"
 
 instance IsConfig Topology where
   configPrefix = return Nothing
@@ -164,7 +193,7 @@ instance ToJSON AllStaticallyKnownPeers where
       aux (NodeName name, info) = name .= info
 
 instance ToJSON Topology where
-  toJSON (TopologyStatic    nodes)  = A.object [ "nodes"  .= nodes ]
-  toJSON (TopologyBehindNAT relays) = A.object [ "relays" .= relays ]
-  toJSON (TopologyP2P)              = error "TODO: toJSON TopologyP2P"
-  toJSON (TopologyTransitional)     = error "TODO: toJSON TopologyTransitional"
+  toJSON (TopologyStatic    nodes)  = A.object [ "nodes"        .= nodes  ]
+  toJSON (TopologyBehindNAT relays) = A.object [ "relays"       .= relays ]
+  toJSON (TopologyP2P kp)           = A.object [ "p2p"          .= kp     ]
+  toJSON (TopologyTransitional kp)  = A.object [ "transitional" .= kp     ]

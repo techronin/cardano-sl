@@ -55,10 +55,6 @@ import qualified Pos.DB.Block                   as DB
 import           Pos.DB.DB                      (gsAdoptedBVDataDefault, initNodeDBs)
 import           Pos.DB.Pure                    (DBPureVar, newDBPureVar)
 import           Pos.Delegation                 (DelegationVar, mkDelegationVar)
-import           Pos.Discovery                  (DiscoveryContextSum (..),
-                                                 HasDiscoveryContextSum (..),
-                                                 MonadDiscovery (..), findPeersSum,
-                                                 getPeersSum)
 import           Pos.Generator.Block            (AllSecrets (..), HasAllSecrets (..))
 import           Pos.Genesis                    (stakeDistribution)
 import qualified Pos.GState                     as GState
@@ -213,7 +209,6 @@ data BlockTestContext = BlockTestContext
     -- slot. Otherwise simple slotting is used.
     , btcParams            :: !TestParams
     , btcReportingContext  :: !ReportingContext
-    , btcDiscoveryContext  :: !DiscoveryContextSum
     , btcDelegation        :: !DelegationVar
     }
 
@@ -259,7 +254,6 @@ initBlockTestContext tp@TestParams {..} callback = do
             btcTxpMem <- (, ignoreTxpMetrics) <$> mkTxpLocalData
             let btcTxpGlobalSettings = txpGlobalSettings
             let btcReportingContext = emptyReportingContext
-            let btcDiscoveryContext = DCStatic mempty
             let btcSlotId = Nothing
             let btcParams = tp
             let btcGState = GState.GStateContext {_gscDB = dbPureVar, ..}
@@ -387,9 +381,6 @@ instance HasLens SimpleSlottingVar BlockTestContext SimpleSlottingVar where
 instance HasReportingContext BlockTestContext where
     reportingContext = btcReportingContext_L
 
-instance HasDiscoveryContextSum BlockTestContext where
-    discoveryContextSum = btcDiscoveryContext_L
-
 instance HasSlottingVar BlockTestContext where
     slottingTimestamp = btcSystemStart_L
     slottingVar = GState.gStateContext . GState.gscSlottingVar
@@ -461,7 +452,3 @@ instance MonadGState BlockTestMode where
 instance MonadBListener BlockTestMode where
     onApplyBlocks = onApplyBlocksStub
     onRollbackBlocks = onRollbackBlocksStub
-
-instance MonadDiscovery BlockTestMode where
-    getPeers = getPeersSum
-    findPeers = findPeersSum

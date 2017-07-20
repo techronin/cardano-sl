@@ -22,7 +22,7 @@ import           Pos.Client.Txp.History     (MonadTxHistory (..))
 import           Pos.Client.Txp.Util        (TxError (..), createMTx, createRedemptionTx,
                                              createTx)
 import           Pos.Communication.Methods  (sendTx)
-import           Pos.Communication.Protocol (NodeId, OutSpecs, EnqueueMsg)
+import           Pos.Communication.Protocol (OutSpecs, EnqueueMsg)
 import           Pos.Communication.Specs    (createOutSpecs)
 import           Pos.Communication.Types    (InvOrDataTK)
 import           Pos.Crypto                 (RedeemSecretKey, SafeSigner, hash,
