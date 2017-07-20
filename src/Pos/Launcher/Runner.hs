@@ -55,7 +55,7 @@ import           Pos.Discovery                   (DiscoveryContextSum (..))
 import           Pos.Launcher.Param              (BaseParams (..), LoggingParams (..),
                                                   NodeParams (..))
 import           Pos.Launcher.Resource           (NodeResources (..), hoistNodeResources)
-import           Pos.Network.Types               (NetworkConfig (..), NodeId)
+import           Pos.Network.Types               (NetworkConfig (..), NodeId, topologyNodeType)
 import           Pos.Security                    (SecurityWorkersClass)
 import           Pos.Ssc.Class                   (SscConstraint)
 import           Pos.Statistics                  (EkgParams (..), StatsdParams (..))
@@ -217,7 +217,7 @@ initQueue NetworkConfig{..} =
     -- TODO: Find better self identifier (for improved logging)
     OQ.new ("self" :: String) enqueuePolicy dequeuePolicy failurePolicy
   where
-    ourNodeType = ncNodeType
+    ourNodeType = topologyNodeType ncTopology
     enqueuePolicy = OQ.defaultEnqueuePolicy ourNodeType
     dequeuePolicy = OQ.defaultDequeuePolicy ourNodeType
     failurePolicy = OQ.defaultFailurePolicy ourNodeType

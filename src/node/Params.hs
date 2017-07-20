@@ -24,7 +24,7 @@ import           Pos.Genesis           (devAddrDistr, devStakesDistr,
                                         genesisProdBootStakeholders, genesisUtxo)
 import           Pos.Launcher          (BaseParams (..), LoggingParams (..),
                                         NetworkParams (..), NodeParams (..))
-import           Pos.Network.Types     (NetworkConfig, emptyNetworkConfig)
+import           Pos.Network.CLI       (intNetworkConfigOpts)
 import           Pos.Security          (SecurityParams (..))
 import           Pos.Ssc.GodTossing    (GtParams (..))
 import           Pos.Update.Params     (UpdateParams (..))
@@ -91,10 +91,8 @@ getNodeParams args@Args {..} systemStart = do
         userSecretWithGenesisKey args =<<
         updateUserSecretVSS args =<<
         peekUserSecret (getKeyfilePath args)
+    npNetworkConfig <- liftIO $ intNetworkConfigOpts networkConfigOpts
     let npNetwork = getNetworkParams args
-        -- TODO parse the network configuration from some yaml file.
-        npNetworkConfig :: NetworkConfig
-        npNetworkConfig = emptyNetworkConfig nodeType
         devStakeDistr =
             devStakesDistr
                 (CLI.flatDistr commonArgs)

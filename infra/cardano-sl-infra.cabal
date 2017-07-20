@@ -73,7 +73,10 @@ library
                         Pos.Communication.Relay.Util
                         Pos.Communication.Util
 
+                        -- Network topology
                         Pos.Network.Types
+                        Pos.Network.Yaml
+                        Pos.Network.CLI
 
                         -- Recovery
                         Pos.Recovery.Info
@@ -110,6 +113,7 @@ library
                       , containers
                       , data-default
                       , directory
+                      , dns
                       , either
                       , ether >= 0.5
                       , exceptions
@@ -117,6 +121,7 @@ library
                       , formatting
                       , generic-arbitrary
                       , hashable
+                      , iproute
                       , kademlia
                       , lens
                       , list-t
@@ -150,6 +155,7 @@ library
                       , universum
                       , unordered-containers
                       , wreq
+                      , yaml
 
   default-language:    Haskell2010
 
