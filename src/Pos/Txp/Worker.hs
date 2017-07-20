@@ -27,11 +27,12 @@ import           System.Wlog         (logInfo, logWarning, logError)
 import           Pos.Block.Network.Types (MsgSubscribe (..))
 import           Pos.Communication   (Conversation (..), ConversationActions (..),
                                       convH, toOutSpecs, worker,
-                                      NodeId, withConnectionTo)
+                                      NodeId, withConnectionTo, SendActions)
+import           Pos.Network.Types   (NetworkConfig (..), DnsDomains(..),
+                                      Topology(..))
 import           Pos.Slotting        (getLastKnownSlotDuration)
 import           Pos.Util            (lensOf)
 import           Pos.Util.TimeWarp   (addressToNodeId)
-import           Pos.Launcher.Param  (RelayParams(..))
 #endif
 
 -- | All workers specific to transaction processing.
@@ -74,42 +75,61 @@ subscribeWorker
     :: forall ssc ctx m. (WorkMode ssc ctx m, SscWorkersClass ssc)
     => (WorkerSpec m, OutSpecs)
 subscribeWorker = worker subscribeWorkerSpec $ \sendActions -> do
-    resolvSeed  <- liftIO $ DNS.makeResolvSeed DNS.defaultResolvConf
-    relayParams <- view (lensOf @RelayParams) <$> ask
+    networkCfg <- view (lensOf @NetworkConfig) <$> ask
 
-    let go :: KnownRelays -> m ()
-        go relays = do
-          slotDur <- getLastKnownSlotDuration
-          let delayInterval :: Millisecond
-              delayInterval = max (slotDur `div` 4) (convertUnit (5 :: Second))
+    case ncTopology networkCfg of
+      TopologyBehindNAT dnsDomains -> do
+        resolvSeed <- liftIO $ DNS.makeResolvSeed DNS.defaultResolvConf
+        subscribeWorker' sendActions
+                         dnsDomains
+                         (ncDefaultPort networkCfg)
+                         resolvSeed
+      _otherwise ->
+        -- Moving on, nothing to see here
+        return ()
 
-          now   <- liftIO $ getCurrentTime
-          peers <- findRelays relayParams resolvSeed
-          let relays' = updateKnownRelays now peers relays
+subscribeWorkerSpec :: OutSpecs
+subscribeWorkerSpec = toOutSpecs [ convH (Proxy @MsgSubscribe) (Proxy @Void) ]
 
-          case preferredRelays now relays' of
-            [] -> do
-              delay delayInterval
-              go relays'
-            (relay:_) -> do
-              logInfo $ msgConnectingTo relay
-              Left ex <- try $ withConnectionTo sendActions relay $ \_peerData ->
-                pure $ Conversation $ \conv -> do
-                  send conv MsgSubscribe
-                  _void :: Maybe Void <- recv conv 0 -- Other side will never send
-                  throwM RelayClosedConnection
-              logWarning $ msgLostConnection relay
-              timeOfEx <- liftIO $ getCurrentTime
-              go $ M.adjust (\r -> r { relayException = Just (timeOfEx, ex) })
-                            relay
-                            relays'
-
-    go M.empty
+subscribeWorker'
+    :: forall ssc ctx m. (WorkMode ssc ctx m)
+    => SendActions m -> DnsDomains -> Word16 -> DNS.ResolvSeed -> m ()
+subscribeWorker' sendActions (DnsDomains dnsDomains) defaultPort resolvSeed =
+    loop M.empty
   where
+    loop :: KnownRelays -> m ()
+    loop relays = do
+      slotDur <- getLastKnownSlotDuration
+      let delayInterval :: Millisecond
+          delayInterval = max (slotDur `div` 4) (convertUnit (5 :: Second))
+
+      now   <- liftIO $ getCurrentTime
+      peers <- findRelays
+      let relays' = updateKnownRelays now peers relays
+
+      case preferredRelays now relays' of
+        [] -> do
+          delay delayInterval
+          loop relays'
+        (relay:_) -> do
+          logInfo $ msgConnectingTo relay
+          Left ex <- try $ withConnectionTo sendActions relay $ \_peerData ->
+            pure $ Conversation $ \conv -> do
+              send conv MsgSubscribe
+              _void :: Maybe Void <- recv conv 0 -- Other side will never send
+              throwM RelayClosedConnection
+          logWarning $ msgLostConnection relay
+          timeOfEx <- liftIO $ getCurrentTime
+          loop $ M.adjust (\r -> r { relayException = Just (timeOfEx, ex) })
+                          relay
+                          relays'
+
     -- | Do DNS lookup to find relay nodes
-    findRelays :: RelayParams -> DNS.ResolvSeed -> m [NodeId]
-    findRelays relayParams@RelayParams{..} resolvSeed =
-        go [] rpDNS
+    --
+    -- TODO: We don't currently use the DnsDomains correctly.
+    findRelays :: m [NodeId]
+    findRelays =
+        go [] (concat dnsDomains)
       where
         go :: [DNS.DNSError] -> [DNS.Domain] -> m [NodeId]
         go errs [] = do
@@ -119,12 +139,11 @@ subscribeWorker = worker subscribeWorkerSpec $ \sendActions -> do
           mAddrs <- liftIO $ DNS.withResolver resolvSeed (`DNS.lookupA` dom)
           case mAddrs of
             Left  err   -> go (err:errs) doms
-            Right addrs -> return $ map (ipv4ToNodeId relayParams) addrs
+            Right addrs -> return $ map ipv4ToNodeId addrs
 
     -- | Turn IPv4 address returned by DNS into a NodeId
-    ipv4ToNodeId :: RelayParams -> IPv4 -> NodeId
-    ipv4ToNodeId RelayParams{..} addr =
-        addressToNodeId (BS.C8.pack (show addr), rpPort)
+    ipv4ToNodeId :: IPv4 -> NodeId
+    ipv4ToNodeId addr = addressToNodeId (BS.C8.pack (show addr), defaultPort)
 
     -- Suitable relays in order of preference
     --
@@ -178,8 +197,5 @@ subscribeWorker = worker subscribeWorkerSpec $ \sendActions -> do
 
     msgDnsFailure :: [DNS.DNSError] -> Text
     msgDnsFailure = sformat $ "subscribeWorker: DNS failure: " % shown
-
-subscribeWorkerSpec :: OutSpecs
-subscribeWorkerSpec = toOutSpecs [ convH (Proxy @MsgSubscribe) (Proxy @Void) ]
 
 #endif

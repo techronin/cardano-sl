@@ -127,7 +127,6 @@ getNodeParams args@Args {..} systemStart = do
         , npEnableMetrics = enableMetrics
         , npEkgParams = ekgParams
         , npStatsdParams = statsdParams
-        , npRelayParams = error "TODO define the RelayParams"
         , ..
         }
 

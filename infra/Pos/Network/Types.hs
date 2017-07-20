@@ -43,13 +43,14 @@ data Topology =
     --
     -- This is used for exchanges.
     --
-    -- TODO: Not sure what parameters we need here.
+    -- TODO: Not sure what parameters we need here; possibly the
+    -- 'NetworkParams' type from 'Pos.Launcher.Param'
   | TopologyP2P
 
     -- | We discover our peers through Kademlia, and every node in the network
     -- is a core node.
     --
-    -- TODO: Not sure what parameters we need here.
+    -- TODO: Not sure what parameters we need here; see 'TopologyP2P'.
     -- TODO: This is temporary.
   | TopologyTransitional
   deriving (Show)
