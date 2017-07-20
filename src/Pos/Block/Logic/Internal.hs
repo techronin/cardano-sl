@@ -42,7 +42,6 @@ import           Pos.DB.Block                (MonadBlockDB, MonadSscBlockDB)
 import           Pos.Delegation.Class        (MonadDelegation)
 import           Pos.Delegation.Logic        (dlgApplyBlocks, dlgNormalizeOnRollback,
                                               dlgRollbackBlocks)
-import           Pos.Discovery.Class         (MonadDiscovery)
 import           Pos.Exception               (assertionFailed)
 import qualified Pos.GState                  as GS
 import           Pos.Lrc.Context             (LrcContext)
@@ -108,7 +107,6 @@ type MonadBlockApply ssc ctx m
        , Mockable CurrentTime m
        -- Needed for error reporting.
        , HasReportingContext ctx
-       , MonadDiscovery m
        , MonadBaseControl IO m
        , MonadReader ctx m
        )

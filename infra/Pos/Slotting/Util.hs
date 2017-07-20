@@ -33,7 +33,6 @@ import           Universum
 import           Pos.Core               (FlatSlotId, SlotId (..), Timestamp (..),
                                          addTimeDiffToTimestamp, flattenSlotId,
                                          getSlotIndex, slotIdF, subTimeDiffSafe)
-import           Pos.Discovery.Class    (MonadDiscovery)
 import           Pos.Exception          (CardanoException)
 import           Pos.Recovery.Info      (MonadRecoveryInfo (recoveryInProgress))
 import           Pos.Reporting.MemState (HasReportingContext)
@@ -105,7 +104,6 @@ type OnNewSlot ctx m =
     , Mockable Delay m
     , HasReportingContext ctx
     , HasShutdownContext ctx
-    , MonadDiscovery m
     , MonadRecoveryInfo m
     )
 

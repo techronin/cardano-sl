@@ -18,7 +18,6 @@ import           Pos.Communication    (OutSpecs, WorkerSpec, localWorker,
                                        relayPropagateOut)
 import           Pos.Context          (NodeContext (..), recoveryCommGuard)
 import           Pos.Delegation       (delegationRelays, dlgWorkers)
-import           Pos.Discovery        (discoveryWorkers)
 import           Pos.Launcher.Resource (NodeResources (..))
 import           Pos.Lrc.Worker       (lrcOnNewSlotWorker)
 import           Pos.Network.Types    (NetworkConfig(..), Topology(..))
@@ -47,9 +46,7 @@ allWorkers NodeResources {..} = mconcatPair
       -- Only workers of "onNewSlot" type
       -- I have no idea what this ↑ comment means (@gromak).
 
-      wrap' "dht"        $ discoveryWorkers ncDiscoveryContext
-
-    , wrap' "ssc"        $ sscWorkers
+      wrap' "ssc"        $ sscWorkers
     , wrap' "security"   $ untag securityWorkers
     , wrap' "lrc"        $ first one lrcOnNewSlotWorker
     , wrap' "us"         $ usWorkers

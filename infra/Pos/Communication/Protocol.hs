@@ -44,7 +44,6 @@ import           Universum
 
 import           Pos.Communication.Types.Protocol
 import           Pos.Core.Types                   (SlotId)
-import           Pos.Discovery.Class              (MonadDiscovery)
 import           Pos.Recovery.Info                (MonadRecoveryInfo)
 import           Pos.Reporting                    (HasReportingContext)
 import           Pos.Shutdown                     (HasShutdownContext)
@@ -276,7 +275,6 @@ type LocalOnNewSlotComm ctx m =
     , Mockables m [Fork, Delay]
     , HasReportingContext ctx
     , HasShutdownContext ctx
-    , MonadDiscovery m
     , MonadRecoveryInfo m
     )
 

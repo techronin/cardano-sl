@@ -7,7 +7,6 @@ import           Universum                       hiding (bracket)
 
 import           Control.Monad.Fix               (MonadFix)
 import qualified Control.Monad.Reader            as Mtl
-import           Formatting                      (sformat, shown, (%))
 import           Mockable                        (MonadMockable, Production, bracket,
                                                   fork, sleepForever)
 import           Network.Transport.Abstract      (Transport)
@@ -15,8 +14,7 @@ import           Node                            (noReceiveDelay, simpleNodeEndP
 import           System.Wlog                     (WithLogger, logDebug, logInfo)
 
 import           Pos.Communication               (ActionSpec (..), MkListeners, NodeId,
-                                                  OutSpecs, WorkerSpec, WithPeerState)
-import           Pos.Discovery                   (findPeers)
+                                                  OutSpecs, WorkerSpec)
 import           Pos.Launcher                    (BaseParams (..), LoggingParams (..),
                                                   runServer, OQ, initQueue)
 import           Pos.Network.Types               (NetworkConfig, emptyNetworkConfig,
@@ -63,8 +61,6 @@ runWallet
     -> (WorkerSpec m, OutSpecs)
 runWallet (plugins', pouts) = (,outs) . ActionSpec $ \vI sendActions -> do
     logInfo "Wallet is initialized!"
-    peers <- findPeers
-    logInfo $ sformat ("Known peers: "%shown) (toList peers)
     let unpackPlugin (ActionSpec action) = action vI sendActions
     mapM_ (fork . unpackPlugin) $ plugins' ++ workers'
     logDebug "Forked all plugins successfully"
@@ -107,7 +103,7 @@ runRawStaticPeersWallet networkConfig transport peers WalletParams {..}
     closeDB = closeState
 
 runServer_
-    :: (MonadIO m, MonadMockable m, MonadFix m, WithLogger m, WithPeerState m)
+    :: (MonadIO m, MonadMockable m, MonadFix m, WithLogger m)
     => NetworkConfig -> Transport m -> MkListeners m -> OutSpecs -> OQ m -> ActionSpec m b -> m b
 runServer_ networkConfig transport mkl outSpecs oq =
     runServer networkConfig (simpleNodeEndPoint transport) (const noReceiveDelay) (const mkl)

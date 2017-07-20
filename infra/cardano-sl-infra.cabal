@@ -36,10 +36,6 @@ library
                         Pos.Slotting.Error
                         Pos.Slotting.Util
 
-                        Pos.Discovery
-                        Pos.Discovery.Class
-                        Pos.Discovery.Holders
-
                         -- Pos.DHT
                         Pos.DHT
                         Pos.DHT.Constants

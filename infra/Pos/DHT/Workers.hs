@@ -20,7 +20,6 @@ import           Pos.Core.Slotting          (flattenSlotId)
 import           Pos.Core.Types             (slotIdF)
 import           Pos.DHT.Constants          (kademliaDumpInterval)
 import           Pos.DHT.Real.Types         (KademliaDHTInstance (..))
-import           Pos.Discovery.Class        (MonadDiscovery)
 import           Pos.Recovery.Info          (MonadRecoveryInfo, recoveryCommGuard)
 import           Pos.Reporting              (HasReportingContext)
 import           Pos.Shutdown               (HasShutdownContext)
@@ -37,7 +36,6 @@ type DhtWorkMode ctx m =
     , MonadReader ctx m
     , HasReportingContext ctx
     , HasShutdownContext ctx
-    , MonadDiscovery m
     )
 
 dhtWorkers

@@ -55,7 +55,6 @@ import           Pos.DB.Rocks               (closeNodeDBs, openNodeDBs)
 import           Pos.Delegation             (DelegationVar, mkDelegationVar)
 import           Pos.DHT.Real               (KademliaDHTInstance, KademliaParams (..),
                                              startDHTInstance, stopDHTInstance)
-import           Pos.Discovery              (DiscoveryContextSum (..))
 import           Pos.Launcher.Param         (BaseParams (..), LoggingParams (..),
                                              NetworkParams (..), NodeParams (..))
 import           Pos.Lrc.Context            (LrcContext (..), mkLrcSyncData)
@@ -238,11 +237,6 @@ allocateNodeContext np@NodeParams {..} sscnp putSlotting = do
     ncLoggerConfig <- getRealLoggerConfig $ bpLoggingParams npBaseParams
     ncBlkSemaphore <- BlkSemaphore <$> newEmptyMVar
     lcLrcSync <- mkLrcSyncData >>= newTVarIO
-    ncDiscoveryContext <-
-        case npDiscovery npNetwork of
-            Left peers -> pure (DCStatic peers)
-            Right kadParams ->
-                DCKademlia <$> createKademliaInstance npBaseParams kadParams
     ncSlottingVar <- (npSystemStart,) <$> mkSlottingVar
     ncSlottingContext <-
         case npUseNTP of
@@ -280,10 +274,7 @@ allocateNodeContext np@NodeParams {..} sscnp putSlotting = do
     ctx <$> liftIO (newTBQueueIO maxBound)
 
 releaseNodeContext :: forall ssc m . MonadIO m => NodeContext ssc -> m ()
-releaseNodeContext NodeContext {..} =
-    case ncDiscoveryContext of
-        DCKademlia kademlia -> stopDHTInstance kademlia
-        DCStatic _          -> pass
+releaseNodeContext _ = return ()
 
 -- Create new 'SlottingVar' using data from DB. Probably it would be
 -- good to have it in 'infra', but it's complicated.

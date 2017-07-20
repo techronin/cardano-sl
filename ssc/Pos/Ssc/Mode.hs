@@ -13,7 +13,6 @@ import           System.Wlog         (WithLogger)
 
 import           Pos.Core            (HasPrimaryKey)
 import           Pos.DB.Class        (MonadDB, MonadGState)
-import           Pos.Discovery       (MonadDiscovery)
 import           Pos.Lrc.Context     (LrcContext)
 import           Pos.Recovery.Info   (MonadRecoveryInfo)
 import           Pos.Reporting       (HasReportingContext)
@@ -37,7 +36,6 @@ type SscMode ssc ctx m
       , MonadSscMem ssc ctx m
       , MonadRecoveryInfo m
       , HasShutdownContext ctx
-      , MonadDiscovery m
       , MonadReader ctx m
       , HasSscContext ssc ctx
       , HasReportingContext ctx
