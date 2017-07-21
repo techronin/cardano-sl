@@ -55,7 +55,7 @@ import           System.Wlog                (WithLogger, logDebug, logInfo, logW
 import           Pos.Block.Core             (BlockHeader, getBlockHeader,
                                              mainBlockTxPayload)
 import           Pos.Block.Logic            (withBlkSemaphore_)
-import           Pos.Block.Types            (Blund, undoTx)
+import           Pos.Block.Types            (Blund, undoTx, TxUndo)
 import           Pos.Client.Txp.History     (TxHistoryEntry (..), GenesisToil, runGenesisToil)
 import           Pos.Constants              (genesisHash, blkSecurityParam)
 import           Pos.Context                (BlkSemaphore, genesisUtxoM, GenesisUtxo (..))
@@ -80,7 +80,7 @@ import           Pos.Txp.Core               (Tx (..), TxAux (..), TxId, TxIn (..
                                              getTxDistribution, toaOut, topsortTxs,
                                              txOutAddress)
 import           Pos.Txp.MemState.Class     (MonadTxpMem, getLocalTxs)
-import           Pos.Txp.Toil               (MonadUtxo (..), MonadUtxoRead (..), fromUtxo,
+import           Pos.Txp.Toil               (MonadUtxo (..), MonadUtxoRead (..), DBToil, fromUtxo, runDBToil,
                                              UtxoModifier, ToilT, runToilTLocal,
                                              applyTxToUtxo)
 import           Pos.Util.Chrono            (getNewestFirst)
@@ -291,8 +291,8 @@ syncWalletWithGStateUnsafe encSK wTipHeader gstateH = do
             zip3 (gbTxs b) (undoTx u) (repeat $ headerHash b)
 
         applyBlock :: [CWAddressMeta] -> Blund ssc -> ToilT () (GenesisToil m) CAccModifier
-        applyBlock allAddresses (b, _) = trackingApplyTxs encSK allAddresses mDiff blkHeaderTs $
-                                         zip (gbTxs b) (repeat $ getBlockHeader b)
+        applyBlock allAddresses (b, u) = trackingApplyTxs encSK allAddresses mDiff blkHeaderTs $
+                                         zip3 (gbTxs b) (undoTx u) (repeat $ getBlockHeader b)
 
         computeAccModifier :: BlockHeader ssc -> m CAccModifier
         computeAccModifier wHeader = do
@@ -345,11 +345,11 @@ syncWalletWithGStateUnsafe encSK wTipHeader gstateH = do
 
 runWithWalletUtxo
     :: (MonadReader ctx m, HasLens GenesisUtxo ctx GenesisUtxo, WebWalletModeDB ctx m)
-    => ToilT () (GenesisToil m) a
+    => ToilT () (DBToil m) a
     -> m a
 runWithWalletUtxo action = do
     walletUtxo <- WS.getWalletUtxo
-    runGenesisToil $ fst <$> runToilTLocal (fromUtxo walletUtxo) def mempty action
+    runDBToil $ fst <$> runToilTLocal (fromUtxo walletUtxo) def mempty action
 
 -- Process transactions on block application,
 -- decrypt our addresses, and add/delete them to/from wallet-db.
@@ -362,7 +362,7 @@ trackingApplyTxs
     -> [CWAddressMeta]                             -- ^ All addresses in wallet
     -> (BlockHeader ssc -> Maybe ChainDifficulty)  -- ^ Function to determine tx chain difficulty
     -> (BlockHeader ssc -> Maybe Timestamp)        -- ^ Function to determine tx timestamp in history
-    -> [(TxAux, BlockHeader ssc)]                  -- ^ Txs of blocks and corresponding header hash
+    -> [(TxAux, TxMode, BlockHeader ssc)]          -- ^ Txs of blocks and corresponding header hash
     -> m CAccModifier
 trackingApplyTxs (getEncInfo -> encInfo) allAddresses getDiff getTs txs =
     foldlM applyTx mempty txs
@@ -370,8 +370,8 @@ trackingApplyTxs (getEncInfo -> encInfo) allAddresses getDiff getTs txs =
     snd3 (_, x, _) = x
     toTxInOut txid (idx, out, dist) = (TxIn txid idx, TxOutAux out dist)
 
-    applyTx :: CAccModifier -> (TxAux, BlockHeader ssc) -> m CAccModifier
-    applyTx CAccModifier{..} (TxAux {..}, blkHeader) = do
+    applyTx :: CAccModifier -> (TxAux, TxUndo, BlockHeader ssc) -> m CAccModifier
+    applyTx CAccModifier{..} (TxAux {..}, undo, blkHeader) = do
         let hh = headerHash blkHeader
             mDiff = getDiff blkHeader
             mTs = getTs blkHeader
@@ -379,8 +379,8 @@ trackingApplyTxs (getEncInfo -> encInfo) allAddresses getDiff getTs txs =
             tx@(UnsafeTx (NE.toList -> inps) (NE.toList -> outs) _) = taTx
             txId = hash tx
 
-        resolvedInputs <- catMaybes <$> mapM (\tin -> fmap (tin, ) <$> utxoGet tin) inps
-        let txOutgoings = map txOutAddress outs
+        let resolvedInputs = zip inps $ NE.toList undo
+            txOutgoings = map txOutAddress outs
             txInputs = map (toaOut . snd) resolvedInputs
             txIncomings = map txOutAddress txInputs
 
