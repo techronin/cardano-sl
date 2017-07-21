@@ -21,6 +21,7 @@ module Test.Pos.Block.Logic.Mode
 
 import           Universum
 
+import           Control.Category               (id)
 import           Control.Lens                   (makeClassy, makeLensesWith)
 import qualified Data.HashMap.Strict            as HM
 import qualified Data.Map.Strict                as M
@@ -58,6 +59,7 @@ import           Pos.Delegation                 (DelegationVar, mkDelegationVar)
 import           Pos.Generator.Block            (AllSecrets (..), HasAllSecrets (..))
 import           Pos.Genesis                    (stakeDistribution)
 import qualified Pos.GState                     as GState
+import           Pos.KnownPeers                 (MonadKnownPeers (..))
 import           Pos.Launcher                   (newInitFuture)
 import           Pos.Lrc                        (LrcContext (..), mkLrcSyncData)
 import           Pos.Reporting                  (HasReportingContext (..),
@@ -452,3 +454,8 @@ instance MonadGState BlockTestMode where
 instance MonadBListener BlockTestMode where
     onApplyBlocks = onApplyBlocksStub
     onRollbackBlocks = onRollbackBlocksStub
+
+instance MonadKnownPeers BlockTestMode where
+    updateKnownPeers _ = pure ()
+    removeKnownPeer _ = pure ()
+    formatKnownPeers formatter = pure (formatter id)

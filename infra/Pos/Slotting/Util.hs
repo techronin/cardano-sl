@@ -34,6 +34,7 @@ import           Pos.Core               (FlatSlotId, SlotId (..), Timestamp (..)
                                          addTimeDiffToTimestamp, flattenSlotId,
                                          getSlotIndex, slotIdF, subTimeDiffSafe)
 import           Pos.Exception          (CardanoException)
+import           Pos.KnownPeers         (MonadKnownPeers)
 import           Pos.Recovery.Info      (MonadRecoveryInfo (recoveryInProgress))
 import           Pos.Reporting.MemState (HasReportingContext)
 import           Pos.Reporting.Methods  (reportMisbehaviourSilent, reportingFatal)
@@ -105,6 +106,7 @@ type OnNewSlot ctx m =
     , HasReportingContext ctx
     , HasShutdownContext ctx
     , MonadRecoveryInfo m
+    , MonadKnownPeers m
     )
 
 -- | Run given action as soon as new slot starts, passing SlotId to

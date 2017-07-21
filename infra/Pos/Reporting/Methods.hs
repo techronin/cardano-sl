@@ -43,6 +43,7 @@ import           System.Wlog              (LoggerConfig (..), WithLogger, hwFile
 import           Paths_cardano_sl_infra   (version)
 import           Pos.Core.Constants       (protocolMagic)
 import           Pos.Exception            (CardanoFatalError)
+import           Pos.KnownPeers           (MonadKnownPeers (..))
 import           Pos.Reporting.Exceptions (ReportingError (..))
 import           Pos.Reporting.MemState   (HasLoggerConfig (..), HasReportServers (..),
                                            HasReportingContext (..))
@@ -62,6 +63,7 @@ type MonadReporting ctx m =
        ( MonadIO m
        , MonadMask m
        , MonadReader ctx m
+       , MonadKnownPeers m
        , HasReportingContext ctx
        , WithLogger m
        )
@@ -134,16 +136,17 @@ ipv4Local w =
 
 -- | Retrieves node info that we would like to know when analyzing
 -- malicious behavior of node.
-getNodeInfo :: (MonadIO m) => m Text
+getNodeInfo :: (MonadIO m, MonadKnownPeers m) => m Text
 getNodeInfo = do
+    peersText <- formatKnownPeers sformat
     (ips :: [Text]) <-
         map show . filter ipExternal . map ipv4 <$>
         liftIO getNetworkInterfaces
-    pure $ sformat outputF (pretty $ listBuilderJSON ips)
+    pure $ sformat outputF (pretty $ listBuilderJSON ips) peersText
   where
     ipExternal (IPv4 w) =
         not $ ipv4Local w || w == 0 || w == 16777343 -- the last is 127.0.0.1
-    outputF = ("{ nodeParams: '"%stext%"' }")
+    outputF = ("{ nodeParams: '"%stext%"', peers: '"%stext%"' }")
 
 
 -- | Reports misbehaviour given reason string. Effectively designed

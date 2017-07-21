@@ -44,6 +44,7 @@ import           Pos.Generator.Block.Param   (BlockGenParams, HasBlockGenParams 
 import qualified Pos.GState                  as GS
 import           Pos.Launcher.Mode           (newInitFuture)
 import           Pos.Lrc                     (LrcContext (..))
+import           Pos.KnownPeers              (MonadKnownPeers (..))
 import           Pos.Reporting               (HasReportingContext (..), ReportingContext,
                                               emptyReportingContext)
 import           Pos.Slotting                (HasSlottingVar (..), MonadSlots (..),
@@ -73,6 +74,7 @@ type MonadBlockGenBase m
        , MonadMask m
        , MonadIO m
        , MonadBaseControl IO m
+       , MonadKnownPeers m
        , Mockables m
            [ CurrentTime
            , Async
@@ -313,6 +315,11 @@ instance MonadBlockGenBase m => DB.MonadGState (BlockGenMode m) where
 instance MonadBlockGenBase m => MonadBListener (BlockGenMode m) where
     onApplyBlocks = onApplyBlocksStub
     onRollbackBlocks = onRollbackBlocksStub
+
+instance ( Monad m, MonadKnownPeers m ) => MonadKnownPeers (BlockGenMode m) where
+    updateKnownPeers = lift . updateKnownPeers
+    removeKnownPeer = lift . removeKnownPeer
+    formatKnownPeers formatter = lift (formatKnownPeers formatter)
 
 ----------------------------------------------------------------------------
 -- Utilities

@@ -16,6 +16,7 @@ import           Pos.Communication.Protocol (OutSpecs, WorkerSpec, localWorker)
 import           Pos.Delegation.Class       (MonadDelegation)
 import           Pos.Delegation.Logic       (invalidateProxyCaches,
                                              runDelegationStateAction)
+import           Pos.KnownPeers             (MonadKnownPeers)
 import           Pos.Reporting              (HasReportingContext)
 import           Pos.Reporting.Methods      (reportingFatal)
 import           Pos.Shutdown               (HasShutdownContext, runIfNotShutdown)
@@ -36,6 +37,7 @@ dlgInvalidateCaches
        , HasReportingContext ctx
        , HasShutdownContext ctx
        , MonadDelegation ctx m
+       , MonadKnownPeers m
        , MonadReader ctx m
        , Mockable CurrentTime m
        )

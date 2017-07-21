@@ -209,9 +209,12 @@ instance SscHelpersClass ssc =>
     dbPutBlund = dbPutBlundDefault
 
 instance MonadKnownPeers (RealMode ssc) where
-    addKnownPeers peers = do
+    updateKnownPeers k = do
         oq <- rmcOutboundQ <$> ask
-        OQ.addKnownPeers oq peers
+        OQ.updateKnownPeers oq k
     removeKnownPeer nid = do
         oq <- rmcOutboundQ <$> ask
         OQ.removeKnownPeer oq nid
+    formatKnownPeers formatter = do
+        oq <- rmcOutboundQ <$> ask
+        OQ.dumpState oq formatter
