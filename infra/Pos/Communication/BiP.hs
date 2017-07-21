@@ -6,6 +6,7 @@
 
 module Pos.Communication.BiP
        ( BiP(..)
+       , bipPacking
        ) where
 
 import           Universum
@@ -15,16 +16,26 @@ import qualified Data.ByteString.Lazy       as LBS
 import qualified Data.Store                 as Store
 import qualified Network.Transport.Internal as NT (decodeWord32, encodeWord32)
 
-import           Node.Message.Class         (Serializable (..), PackingType(..))
+import           Node.Message.Class         (Serializable (..), PackingType(..), Packing(..))
 import           Node.Message.Decoder       (Decoder (..), pureDone, pureFail, purePartial)
 
 import           Pos.Binary.Class           (Bi (..), encode, label)
 
 data BiP = BiP
 
+bipP :: Proxy BiP
+bipP = Proxy
+
 instance PackingType BiP where
      type PackM BiP   = Identity
      type UnpackM BiP = Identity
+
+bipPacking :: Monad m => Packing BiP m
+bipPacking = Packing  {
+      packingType = bipP
+    , packM       = pure . runIdentity
+    , unpackM     = pure . runIdentity
+    }
 
 instance  Bi t => Serializable BiP t where
     -- Length-prefix the store-encoded body. The length is assumed to fit into

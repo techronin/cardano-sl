@@ -41,7 +41,7 @@ import qualified System.Remote.Monitoring.Statsd as Monitoring
 import           System.Wlog                     (WithLogger, logInfo)
 
 import           Pos.Binary                      ()
-import           Pos.Communication               (ActionSpec (..), BiP (..), InSpecs (..),
+import           Pos.Communication               (ActionSpec (..), bipPacking, InSpecs (..),
                                                   MkListeners (..), OutSpecs (..),
                                                   VerInfo (..), allListeners, Msg,
                                                   PeerData, PackingType,
@@ -247,7 +247,7 @@ runServer NetworkConfig {..} mkTransport mkReceiveDelay mkL (OutSpecs wouts) wit
             mkListeners mkL' ourVerInfo theirVerInfo
     stdGen <- liftIO newStdGen
     logInfo $ sformat ("Our verInfo: "%build) ourVerInfo
-    node mkTransport mkReceiveDelay mkConnectDelay stdGen BiP ourVerInfo defaultNodeEnvironment $ \__node ->
+    node mkTransport mkReceiveDelay mkConnectDelay stdGen bipPacking ourVerInfo defaultNodeEnvironment $ \__node ->
         NodeAction mkListeners' $ \converse ->
             let sendActions :: SendActions m
                 sendActions = makeSendActions ourVerInfo (oqEnqueue oq) converse
