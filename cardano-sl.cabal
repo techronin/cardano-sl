@@ -59,9 +59,6 @@ library
                         Pos.Generator.Block
                         Pos.Generator.BlockEvent
 
-                        -- Known peers
-                        Pos.KnownPeers
-
                         -- Genesis data
                         Pos.Genesis
 
