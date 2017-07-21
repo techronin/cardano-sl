@@ -10,6 +10,7 @@ module Pos.Network.CLI (
 import           Universum
 import           Data.IP (IPv4)
 import           Network.Broadcast.OutboundQueue (Alts, peersFromList)
+import qualified Pos.DHT.Real.Param         as DHT (fromYamlConfig, MalformedDHTKey (..))
 import           Pos.Network.Types (NodeId)
 import           Pos.Network.Yaml (NodeName(..), DnsDomains(..))
 import           Pos.Util.TimeWarp (addressToNodeId)
@@ -89,9 +90,12 @@ intNetworkConfigOpts cfg@NetworkConfigOpts{..} = do
         fromPovOf cfg allStaticallyKnownPeers networkConfigOptsSelf
       Y.TopologyBehindNAT dnsDomains ->
         return $ T.TopologyBehindNAT dnsDomains
-      Y.TopologyP2P kconf ->
-        return $ T.TopologyP2P kconf
-      Y.TopologyTransitional kconf   -> return $ T.TopologyTransitional kconf
+      Y.TopologyP2P kconf -> do
+        kconf' <- either (throwM . DHT.MalformedDHTKey) return (DHT.fromYamlConfig kconf)
+        return $ T.TopologyP2P kconf'
+      Y.TopologyTransitional kconf -> do
+        kconf' <- either (throwM . DHT.MalformedDHTKey) return (DHT.fromYamlConfig kconf)
+        return $ T.TopologyTransitional kconf'
     return T.NetworkConfig {
         ncTopology    = ourTopology
       , ncDefaultPort = networkConfigOptsPort

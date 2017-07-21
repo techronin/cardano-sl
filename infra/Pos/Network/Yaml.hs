@@ -3,6 +3,9 @@ module Pos.Network.Yaml (
     Topology(..)
   , AllStaticallyKnownPeers(..)
   , DnsDomains(..)
+  , KademliaParams(..)
+  , KademliaId(..)
+  , KademliaAddress(..)
   , NodeName(..)
   , NodeRegion(..)
   , NodeRoutes(..)
@@ -10,7 +13,7 @@ module Pos.Network.Yaml (
   ) where
 
 import           Universum
-import           Data.Aeson (FromJSON(..), ToJSON(..), (.:), (.:?), (.=))
+import           Data.Aeson (FromJSON(..), ToJSON(..), (.:), (.:?), (.=), (.!=))
 import           Network.Broadcast.OutboundQueue.Types
 import           Pos.Util.Config
 import qualified Data.Aeson            as A
@@ -70,27 +73,70 @@ data NodeMetadata = NodeMetadata
 
 -- | Parameters for Kademlia, in case P2P or transitional topology are used.
 data KademliaParams = KademliaParams
-    { kpId       :: !(Maybe KademliaId)
+    { kpId              :: !(Maybe KademliaId)
       -- ^ Kademlia identifier. Optional; one can be generated for you.
-    , kpPeer     :: !KademliaAddress
-      -- ^ Initial Kademlia peer, for joining the network.
-    , kpAddress  :: !(Maybe KademliaAddress)
+    , kpPeers           :: ![KademliaAddress]
+      -- ^ Initial Kademlia peers, for joining the network.
+    , kpAddress         :: !(Maybe KademliaAddress)
       -- ^ External Kadmelia address.
-    , kpBind     :: !(Maybe KademliaAddress)
+    , kpBind            :: !KademliaAddress
       -- ^ Address at which to bind the Kademlia socket.
-    , kpDumpFile :: !(Maybe FilePath)
+      -- Shouldn't be necessary to have a separate bind and public address.
+      -- The Kademlia instance in fact shouldn't even need to know its own
+      -- address (should only be used to bind the socket). But due to the way
+      -- that responses for FIND_NODES are serialized, Kademlia needs to know
+      -- its own external address [TW-153]. The mainline 'kademlia' package
+      -- doesn't suffer this problem.
+    , kpExplicitInitial :: !Bool
+    , kpDumpFile        :: !(Maybe FilePath)
     }
     deriving (Show)
 
+instance FromJSON KademliaParams where
+    parseJSON = A.withObject "KademliaParams" $ \obj -> do
+        kpId <- obj .:? "identifier"
+        kpPeers <- obj .: "peers"
+        kpAddress <- obj .:? "externalAddress"
+        kpBind <- obj .: "address"
+        kpExplicitInitial <- obj .:? "explicitInitial" .!= False
+        kpDumpFile <- obj .:? "dumpFile"
+        return KademliaParams {..}
+
+instance ToJSON KademliaParams where
+    toJSON KademliaParams {..} = A.object [
+          "identifier"      .= kpId
+        , "peers"           .= kpPeers
+        , "externalAddress" .= kpAddress
+        , "address"         .= kpBind
+        , "explicitInitial" .= kpExplicitInitial
+        , "dumpFile"        .= kpDumpFile
+        ]
+
 -- | A Kademlia identifier in text representation (probably base64-url encoded).
-newtype KademliaId = KademliaId Text
+newtype KademliaId = KademliaId String
     deriving (Show)
+
+instance FromJSON KademliaId where
+    parseJSON = fmap KademliaId . parseJSON
+
+instance ToJSON KademliaId where
+    toJSON (KademliaId txt) = toJSON txt
 
 data KademliaAddress = KademliaAddress
     { kaHost :: !String
     , kaPort :: !Word16
     }
     deriving (Show)
+
+instance FromJSON KademliaAddress where
+    parseJSON = A.withObject "KademliaAddress " $ \obj ->
+        KademliaAddress <$> obj .: "host" <*> obj .: "port"
+
+instance ToJSON KademliaAddress where
+    toJSON KademliaAddress {..} = A.object [
+          "host" .= kaHost
+        , "port" .= kaPort
+        ]
 
 {-------------------------------------------------------------------------------
   FromJSON instances

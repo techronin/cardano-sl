@@ -18,6 +18,7 @@ import           Pos.Communication    (OutSpecs, WorkerSpec, localWorker,
                                        relayPropagateOut)
 import           Pos.Context          (NodeContext (..), recoveryCommGuard)
 import           Pos.Delegation       (delegationRelays, dlgWorkers)
+import           Pos.DHT.Workers      (dhtWorkers)
 import           Pos.Launcher.Resource (NodeResources (..))
 import           Pos.Lrc.Worker       (lrcOnNewSlotWorker)
 import           Pos.Network.Types    (NetworkConfig(..), Topology(..))
@@ -69,6 +70,7 @@ allWorkers NodeResources {..} = mconcatPair
       -- There's no cardano-sl worker for them; they're put out by the outbound
       -- queue system from time-warp (enqueueConversation on SendActions).
     , ([], relayPropagateOut (mconcat [delegationRelays, untag sscRelays, txRelays, usRelays] :: [Relay m]))
+    , maybe mempty dhtWorkers nrKademlia
     ]
   where
     NodeContext {..} = nrContext
