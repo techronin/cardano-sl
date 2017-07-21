@@ -20,7 +20,8 @@ import           Ether.Internal              (HasLens (..))
 import           Formatting                  (build, sformat, (%))
 import           System.Wlog                 (WithLogger, logDebug)
 
-import           Pos.Core                    (Coin, HeaderHash, StakeholderId, siEpoch)
+import           Pos.Core                    (Coin, EpochIndex, HeaderHash, StakeholderId,
+                                              siEpoch)
 import           Pos.DB.Class                (MonadDBRead, MonadGState, gsIsBootstrapEra)
 import qualified Pos.DB.GState.Common        as GS
 import           Pos.Slotting                (MonadSlots (..))
@@ -56,12 +57,7 @@ txProcessTransaction
 txProcessTransaction itw@(txId, txAux) = do
     let UnsafeTx {..} = taTx txAux
     tipDB <- GS.getTip
-    epoch <- siEpoch <$>
-        -- TODO: Don't use inaccurate slotting here. If we don't know the
-        -- current slot, we should reject transactions. See CSL-1341.
-        getCurrentSlotInaccurate
-    bootEra <- gsIsBootstrapEra epoch
-    bootHolders <- views (lensOf @GenesisUtxo) $ getKeys . utxoToStakes . unGenesisUtxo
+    epoch <- siEpoch <$> (note ToilUnknownCurEpoch =<< getCurrentSlot)
     localUM <- lift $ getUtxoModifier @()
     -- Note: snapshot isn't used here, because it's not necessary.  If
     -- tip changes after 'getTip' and before resolving all inputs, it's
@@ -79,7 +75,7 @@ txProcessTransaction itw@(txId, txAux) = do
                    NE.zipWith (liftM2 (,) . Just) _txInputs resolvedOuts
     pRes <- lift $
             modifyTxpLocalData "txProcessTransaction" $
-            processTxDo resolved bootHolders toilEnv tipDB itw bootEra
+            processTxDo epoch toilEnv resolved tipDB itw
     case pRes of
         Left er -> do
             logDebug $ sformat ("Transaction processing failed: "%build) txId
@@ -87,60 +83,37 @@ txProcessTransaction itw@(txId, txAux) = do
         Right _   ->
             logDebug (sformat ("Transaction is processed successfully: "%build) txId)
   where
-    notBootRelated bootHolders =
-        let txDistr = getTxDistribution $ taDistribution txAux
-            inBoot s = s `HS.member` bootHolders
-            mentioned pool addr = addr `elem` pool
-            bad :: [(StakeholderId, Coin)] -> Bool
-            bad (map fst -> txOutDistr) =
-                -- Has unrelated address
-                any (not . inBoot) txOutDistr ||
-                -- Not all genesis boot addrs are mentioned
-                any (not . mentioned txOutDistr) (HS.toList bootHolders)
-        in NE.filter bad txDistr
-
     processTxDo
-        :: Utxo
-        -> HashSet StakeholderId
+        :: EpochIndex
         -> ToilEnv
+        -> Utxo
         -> HeaderHash
         -> (TxId, TxAux)
-        -> Bool
         -> TxpLocalDataPure
         -> (Either ToilVerFailure (), TxpLocalDataPure)
-    processTxDo resolved bootHolders toilEnv tipDB tx bootEra txld@(uv, mp, undo, tip, ()) = do
-        let tipMismatch = tipDB /= tip
-            bootRel = notBootRelated bootHolders
-        if | tipMismatch ->
-             (Left $ ToilTipsMismatch tipDB tip, txld)
-           | bootEra && not (null bootRel) ->
-            -- We do not allow txs with non-boot-addr stake distr in boot era.
-             (Left $ ToilBootDifferentStake $ unsafeHead bootRel, txld)
-           | otherwise ->
-             let res = (runExceptT $
-                        flip evalUtxoStateT resolved $
-                        execToilTLocal uv mp undo $
-                        processTx tx) toilEnv
-             in case res of
-                 Left er  -> (Left er, txld)
-                 Right ToilModifier{..} ->
-                     (Right (), (_tmUtxo, _tmMemPool, _tmUndos, tip, ()))
+    processTxDo curEpoch toilEnv resolved tipDB tx txld@(uv, mp, undo, tip, ())
+        | tipDB /= tip = (Left (ToilTipsMismatch tipDB tip), txld)
+        | otherwise =
+            let res = (runExceptT $
+                    flip evalUtxoStateT resolved $
+                    execToilTLocal uv mp undo $
+                    processTx curEpoch tx) toilEnv
+            in case res of
+                Left er  -> (Left er, txld)
+                Right ToilModifier{..} ->
+                    (Right (), (_tmUtxo, _tmMemPool, _tmUndos, tip, ()))
 
 -- | 1. Recompute UtxoView by current MemPool
 -- | 2. Remove invalid transactions from MemPool
 -- | 3. Set new tip to txp local data
-txNormalize ::
-       ( MonadIO m
-       , MonadBaseControl IO m
-       , MonadDBRead m
-       , MonadGState m
-       , MonadTxpMem () ctx m
-       , WithLogger m
-       )
+txNormalize
+    :: TxpLocalWorkMode ctx m
     => m ()
 txNormalize = do
+    epoch <- undefined
+    --epoch <- siEpoch <$> (note ToilUnknownCurEpoch =<< getCurrentSlot)
     utxoTip <- GS.getTip
     localTxs <- getLocalTxs
     ToilModifier {..} <-
-        runDBToil $ execToilTLocal mempty def mempty $ normalizeToil localTxs
+        runDBToil $ execToilTLocal mempty def mempty $ normalizeToil epoch localTxs
     setTxpLocalData "txNormalize" (_tmUtxo, _tmMemPool, _tmUndos, utxoTip, _tmExtra)

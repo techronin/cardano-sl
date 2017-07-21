@@ -21,6 +21,7 @@ import           Universum
 
 import           Pos.DB                  (MonadDBRead, SomeBatchOp (..))
 import           Pos.Exception           (assertionFailed)
+import           Pos.Slotting.Class      (getCurrentSlot)
 import           Pos.Txp.Core            (TxAux, TxUndo, TxpUndo, flattenTxPayload)
 import qualified Pos.Txp.DB              as DB
 import           Pos.Txp.Settings.Global (TxpBlock, TxpBlund, TxpGlobalApplyMode,
@@ -45,13 +46,14 @@ txpGlobalSettings =
     }
 
 verifyBlocks
-    :: forall m.
-       TxpGlobalVerifyMode m
+    :: forall ctx m.
+       TxpGlobalVerifyMode ctx m
     => Bool -> OldestFirst NE TxpBlock -> m (OldestFirst NE TxpUndo)
-verifyBlocks verifyAllIsKnown newChain =
+verifyBlocks verifyAllIsKnown newChain = do
+    slot <- getCurrentSlot
     fst <$> runToilAction @_ @() (mapM verifyDo newChain)
   where
-    verifyDo = verifyToil verifyAllIsKnown . convertPayload
+    verifyDo = verifyToil undefined verifyAllIsKnown . convertPayload
     convertPayload :: TxpBlock -> [TxAux]
     convertPayload (Left _)             = []
     convertPayload (Right (_, payload)) = flattenTxPayload payload
@@ -62,8 +64,7 @@ data ApplyBlocksSettings extra m = ApplyBlocksSettings
     }
 
 applyBlocksSettings
-    :: forall m.
-       GlobalToilMode m
+    :: GlobalToilMode m
     => ApplyBlocksSettings () m
 applyBlocksSettings =
     ApplyBlocksSettings
@@ -72,7 +73,7 @@ applyBlocksSettings =
     }
 
 applyBlocksWith
-    :: (TxpGlobalApplyMode m, Default extra)
+    :: (TxpGlobalApplyMode ctx m, Default extra)
     => ApplyBlocksSettings extra (ToilT extra (DBToil m))
     -> OldestFirst NE TxpBlund
     -> m SomeBatchOp
@@ -87,7 +88,7 @@ applyBlocksWith ApplyBlocksSettings {..} blunds = do
         runToilAction (mapM absApplySingle blunds)
 
 rollbackBlocks
-    :: TxpGlobalRollbackMode m
+    :: TxpGlobalRollbackMode ctx m
     => NewestFirst NE TxpBlund -> m SomeBatchOp
 rollbackBlocks blunds =
     toilModifierToBatch . snd <$>

@@ -17,8 +17,11 @@ module Pos.Txp.Toil.Logic
        ) where
 
 import           Universum
+import           Unsafe                     (unsafeHead)
 
 import           Control.Monad.Except       (MonadError (..))
+import qualified Data.HashSet               as HS
+import qualified Data.List.NonEmpty         as NE
 import           Serokell.Data.Memory.Units (Byte)
 import           System.Wlog                (WithLogger)
 
@@ -26,9 +29,12 @@ import           Pos.Binary.Class           (biSize)
 import           Pos.Core.Coin              (integerToCoin)
 import           Pos.Core.Constants         (memPoolLimitRatio)
 import qualified Pos.Core.Fee               as Fee
+import           Pos.Core.Types             (Coin, EpochIndex, StakeholderId)
 import           Pos.Crypto                 (WithHash (..), hash)
-import           Pos.Txp.Core               (TxAux (..), TxId, TxUndo, TxpUndo,
-                                             topsortTxs)
+import           Pos.DB.Class               (isBootstrapEraPure)
+
+import           Pos.Txp.Core               (TxAux (..), TxId, TxOutDistribution, TxUndo,
+                                             TxpUndo, getTxDistribution, topsortTxs)
 import           Pos.Txp.Toil.Balances      (applyTxsToBalances, rollbackTxsBalances)
 import           Pos.Txp.Toil.Class         (MonadBalances (..), MonadToilEnv (..),
                                              MonadTxPool (..), MonadUtxo (..))
@@ -40,10 +46,11 @@ import qualified Pos.Txp.Toil.Utxo          as Utxo
 -- Global
 ----------------------------------------------------------------------------
 
-type GlobalToilMode m = ( MonadUtxo m
-                        , MonadBalances m
-                        , MonadToilEnv m
-                        , WithLogger m)
+type GlobalToilMode m =
+    ( MonadUtxo m
+    , MonadBalances m
+    , MonadToilEnv m
+    , WithLogger m)
 
 -- CHECK: @verifyToil
 -- | Verify transactions correctness with respect to Utxo applying
@@ -57,9 +64,9 @@ type GlobalToilMode m = ( MonadUtxo m
 -- data is just ignored.
 verifyToil
     :: (GlobalToilMode m, MonadError ToilVerFailure m)
-    => Bool -> [TxAux] -> m TxpUndo
-verifyToil verifyAllIsKnown =
-    mapM (verifyAndApplyTx verifyAllIsKnown . withTxId)
+    => EpochIndex -> Bool -> [TxAux] -> m TxpUndo
+verifyToil curEpoch verifyAllIsKnown =
+    mapM (verifyAndApplyTx curEpoch verifyAllIsKnown . withTxId)
 
 -- | Apply transactions from one block. They must be valid (for
 -- example, it implies topological sort).
@@ -81,115 +88,139 @@ rollbackToil txun = do
 -- Local
 ----------------------------------------------------------------------------
 
-type LocalToilMode m = ( MonadUtxo m
-                       , MonadToilEnv m
-                       , MonadTxPool m
-                       )
+type LocalToilMode m =
+    ( MonadUtxo m
+    , MonadToilEnv m
+    , MonadTxPool m
+    )
 
 -- CHECK: @processTx
 -- | Verify one transaction and also add it to mem pool and apply to utxo
 -- if transaction is valid.
 processTx
     :: (LocalToilMode m, MonadError ToilVerFailure m)
-    => (TxId, TxAux) -> m TxUndo
-processTx tx@(id, aux) = do
+    => EpochIndex -> (TxId, TxAux) -> m TxUndo
+processTx curEpoch tx@(id, aux) = do
     whenM (hasTx id) $ throwError ToilKnown
     maxBlockSize <- teMaxBlockSize <$> getToilEnv
     let maxPoolSize = memPoolLimitRatio * maxBlockSize
     whenM ((>= maxPoolSize) <$> poolSize) $
         throwError (ToilOverwhelmed maxPoolSize)
-    undo <- verifyAndApplyTx True tx
+    undo <- verifyAndApplyTx curEpoch True tx
     undo <$ putTxWithUndo id aux undo
 
 -- | Get rid of invalid transactions.
 -- All valid transactions will be added to mem pool and applied to utxo.
 normalizeToil
-    :: (LocalToilMode m)
-    => [(TxId, TxAux)]
-    -> m ()
-normalizeToil txs = mapM_ normalize ordered
+    :: LocalToilMode m
+    => EpochIndex -> [(TxId, TxAux)] -> m ()
+normalizeToil curEpoch txs = mapM_ normalize ordered
   where
     ordered = fromMaybe txs $ topsortTxs wHash txs
     wHash (i, txAux) = WithHash (taTx txAux) i
-    normalize = runExceptT . processTx
+    normalize = runExceptT . processTx curEpoch
 
 ----------------------------------------------------------------------------
 -- ToilEnv logic
 ----------------------------------------------------------------------------
 
+verifyAndApplyTx
+    :: ( MonadUtxo m
+       , MonadToilEnv m
+       , MonadError ToilVerFailure m)
+    => EpochIndex -> Bool -> (TxId, TxAux) -> m TxUndo
+verifyAndApplyTx curEpoch verifyVersions tx@(_, txAux) = do
+    (txUndo, txFee) <- Utxo.verifyTxUtxo ctx txAux
+    verifyToilEnv curEpoch txAux txFee
+    applyTxToUtxo' tx
+    pure txUndo
+  where
+    ctx = Utxo.VTxContext verifyVersions
+
 verifyToilEnv
-    :: (MonadToilEnv m, MonadError ToilVerFailure m)
-    => TxAux -> TxFee -> m ()
-verifyToilEnv txAux txFee = do
-    toilEnv <- getToilEnv
-    let
-        limit = teMaxTxSize toilEnv
-        txFeePolicy = teTxFeePolicy toilEnv
-        txSize = biSize txAux
-    verifyTxFeePolicy txFee txFeePolicy txSize
-    when (txSize > limit) $
-        throwError ToilTooLargeTx {ttltSize = txSize, ttltLimit = limit}
+    :: ( MonadToilEnv m
+       , MonadError ToilVerFailure m)
+    => EpochIndex -> TxAux -> TxFee -> m ()
+verifyToilEnv curEpoch txAux txFee = do
+    ToilEnv {..} <- getToilEnv
+    verifyBootEra teGenStakeholders curEpoch teUnlockEpoch txAux
+    let txSize = biSize txAux
+    verifyTxFeePolicy txFee teTxFeePolicy txSize
+    when (txSize > teMaxTxSize) $
+        throwError ToilTooLargeTx {ttltSize = txSize, ttltLimit = teMaxTxSize}
+
+verifyBootEra
+    :: MonadError ToilVerFailure m
+    => HashSet StakeholderId -> EpochIndex -> EpochIndex -> TxAux -> m ()
+verifyBootEra bootHolders curEpoch unlockEpoch txAux = do
+    let bootEra = isBootstrapEraPure curEpoch unlockEpoch
+    let isNonEmpty = not . null
+    when (bootEra && isNonEmpty notBootRelated) $
+        throwError $ ToilBootDifferentStake $ unsafeHead notBootRelated
+  where
+    notBootRelated :: [TxOutDistribution]
+    notBootRelated =
+        NE.filter isBadDistr (getTxDistribution $ taDistribution txAux)
+
+    isBadDistr :: [(StakeholderId, Coin)] -> Bool
+    isBadDistr (map fst -> txOutDistr) =
+        let inBoot = flip HS.member bootHolders
+            mentioned pool addr = addr `elem` pool in
+        -- Has unrelated address
+        any (not . inBoot) txOutDistr ||
+        -- Not all genesis boot addrs are mentioned
+        any (not . mentioned txOutDistr) (HS.toList bootHolders)
 
 verifyTxFeePolicy
-    :: (MonadToilEnv m, MonadError ToilVerFailure m)
+    :: MonadError ToilVerFailure m
     => TxFee
     -> Fee.TxFeePolicy
     -> Byte
     -> m ()
-verifyTxFeePolicy (TxFee txFee) policy txSize = case policy of
-    Fee.TxFeePolicyTxSizeLinear txSizeLinear -> do
-        let
-            -- We use 'ceiling' to convert from a fixed-precision fractional
-            -- to coin amount. The actual fee is always a non-negative integer
-            -- amount of coins, so if @min_fee <= fee@ holds (the ideal check),
-            -- then @ceiling min_fee <= fee@ holds too.
-            -- The reason we can't compare fractionals directly is that the
-            -- minimal fee may need to appear in an error message (as a reason
-            -- for rejecting the transaction).
-            mTxMinFee = integerToCoin . ceiling $
-                Fee.calculateTxSizeLinear txSizeLinear txSize
-        -- The policy must be designed in a way that makes this impossible,
-        -- but in case the result of its evaluation is negative or exceeds
-        -- maximum coin value, we throw an error.
-        txMinFee <- case mTxMinFee of
-            Nothing -> throwError ToilInvalidMinFee
-                { timfPolicy = policy
-                , timfSize = txSize }
-            Just a -> return a
-        unless (txMinFee <= txFee) $
-            throwError ToilInsufficientFee
-                { tifSize = txSize
-                , tifFee = TxFee txFee
-                , tifMinFee = TxFee txMinFee
-                , tifPolicy = policy }
-    Fee.TxFeePolicyUnknown _ _ ->
-        -- The minimal transaction fee policy exists, but the current
-        -- version of the node doesn't know how to handle it. There are
-        -- three possible options mentioned in [CSLREQ-157]:
-        -- 1. Reject all new-coming transactions (b/c we can't calculate
-        --    fee for them)
-        -- 2. Use latest policy of known type
-        -- 3. Discard the check
-        -- Implementation-wise, the 1st option corresponds to throwing an
-        -- error here (reject), the 3rd option -- doing nothing (accept), and
-        -- the 2nd option would require some engineering feats to
-        -- retrieve previous 'TxFeePolicy' and check against it.
-        return ()
+verifyTxFeePolicy (TxFee txFee) policy txSize = do
+    case policy of
+        Fee.TxFeePolicyTxSizeLinear txSizeLinear -> do
+            let
+                -- We use 'ceiling' to convert from a fixed-precision fractional
+                -- to coin amount. The actual fee is always a non-negative integer
+                -- amount of coins, so if @min_fee <= fee@ holds (the ideal check),
+                -- then @ceiling min_fee <= fee@ holds too.
+                -- The reason we can't compare fractionals directly is that the
+                -- minimal fee may need to appear in an error message (as a reason
+                -- for rejecting the transaction).
+                mTxMinFee = integerToCoin . ceiling $
+                    Fee.calculateTxSizeLinear txSizeLinear txSize
+            -- The policy must be designed in a way that makes this impossible,
+            -- but in case the result of its evaluation is negative or exceeds
+            -- maximum coin value, we throw an error.
+            txMinFee <- case mTxMinFee of
+                Nothing -> throwError ToilInvalidMinFee
+                    { timfPolicy = policy
+                    , timfSize = txSize }
+                Just a -> return a
+            unless (txMinFee <= txFee) $
+                throwError ToilInsufficientFee
+                    { tifSize = txSize
+                    , tifFee = TxFee txFee
+                    , tifMinFee = TxFee txMinFee
+                    , tifPolicy = policy }
+        Fee.TxFeePolicyUnknown _ _ ->
+            -- The minimal transaction fee policy exists, but the current
+            -- version of the node doesn't know how to handle it. There are
+            -- three possible options mentioned in [CSLREQ-157]:
+            -- 1. Reject all new-coming transactions (b/c we can't calculate
+            --    fee for them)
+            -- 2. Use latest policy of known type
+            -- 3. Discard the check
+            -- Implementation-wise, the 1st option corresponds to throwing an
+            -- error here (reject), the 3rd option -- doing nothing (accept), and
+            -- the 2nd option would require some engineering feats to
+            -- retrieve previous 'TxFeePolicy' and check against it.
+            pure ()
 
 ----------------------------------------------------------------------------
 -- Helpers
 ----------------------------------------------------------------------------
-
-verifyAndApplyTx
-    :: (MonadUtxo m, MonadToilEnv m, MonadError ToilVerFailure m)
-    => Bool -> (TxId, TxAux) -> m TxUndo
-verifyAndApplyTx verifyVersions tx@(_, txAux) = do
-    (txUndo, txFee) <- Utxo.verifyTxUtxo ctx txAux
-    verifyToilEnv txAux txFee
-    applyTxToUtxo' tx
-    return txUndo
-  where
-    ctx = Utxo.VTxContext verifyVersions
 
 withTxId :: TxAux -> (TxId, TxAux)
 withTxId aux = (hash (taTx aux), aux)

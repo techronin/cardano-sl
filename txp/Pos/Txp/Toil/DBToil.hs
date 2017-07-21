@@ -8,9 +8,11 @@ module Pos.Txp.Toil.DBToil
        , runDBToil
        ) where
 
+import           Control.Lens                 (views)
 import           Control.Monad.Trans.Identity (IdentityT (..))
 import           Data.Coerce                  (coerce)
 import qualified Ether
+import           Ether.Internal               (HasLens (..))
 import           Universum
 
 import           Pos.Core                     (BlockVersionData (..))
@@ -19,7 +21,9 @@ import           Pos.DB.GState.Balances       (getRealStake, getRealTotalStake)
 import           Pos.Txp.DB.Utxo              (getTxOut)
 import           Pos.Txp.Toil.Class           (MonadBalancesRead (..), MonadToilEnv (..),
                                                MonadUtxoRead (..))
-import           Pos.Txp.Toil.Types           (ToilEnv (..))
+import           Pos.Txp.Toil.Types           (GenesisUtxo (..), ToilEnv (..))
+import           Pos.Txp.Toil.Utxo.Util       (utxoToStakes)
+import           Pos.Util.Util                (getKeys)
 
 data DBToilTag
 
@@ -35,13 +39,20 @@ instance (MonadDBRead m) => MonadBalancesRead (DBToil m) where
     getTotalStake = getRealTotalStake
     getStake = getRealStake
 
-instance (MonadGState m) =>
+instance ( MonadGState m
+         , HasLens GenesisUtxo ctx GenesisUtxo
+         , MonadReader ctx m
+         ) =>
          MonadToilEnv (DBToil m) where
-    getToilEnv = constructEnv <$> gsAdoptedBVData
+    getToilEnv = do
+        genStakeholders <- views (lensOf @GenesisUtxo) $ getKeys . utxoToStakes . unGenesisUtxo
+        constructEnv genStakeholders <$> gsAdoptedBVData
       where
-        constructEnv BlockVersionData {..} =
+        constructEnv genStakeholders BlockVersionData {..} =
             ToilEnv
             { teMaxBlockSize = bvdMaxBlockSize
             , teMaxTxSize = bvdMaxTxSize
             , teTxFeePolicy = bvdTxFeePolicy
+            , teGenStakeholders = genStakeholders
+            , teUnlockEpoch = bvdUnlockStakeEpoch
             }

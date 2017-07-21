@@ -40,6 +40,7 @@ data ToilVerFailure
                           , tifSize   :: !Byte }
     | ToilUnknownAttributes !ByteString
     | ToilBootDifferentStake !TxOutDistribution
+    | ToilUnknownCurEpoch
     deriving (Show, Eq)
 
 instance Exception ToilVerFailure
@@ -83,3 +84,5 @@ instance Buildable ToilVerFailure where
     build (ToilBootDifferentStake distr) =
         bprint ("transaction has non-boot stake distr in boot era: "%listJson)
                (map (sformat pairF) distr)
+    build ToilUnknownCurEpoch =
+        bprint ("current epoch isn't known ")

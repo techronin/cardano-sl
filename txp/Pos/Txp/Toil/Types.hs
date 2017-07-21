@@ -41,7 +41,7 @@ import           Formatting                 (Format, later)
 import           Serokell.Data.Memory.Units (Byte)
 import           Serokell.Util.Text         (mapBuilderJson)
 
-import           Pos.Core                   (Coin, StakeholderId, TxFeePolicy)
+import           Pos.Core                   (Coin, StakeholderId, TxFeePolicy, EpochIndex)
 import           Pos.Txp.Core               (TxAux, TxId, TxIn, TxOutAux, TxUndo)
 import qualified Pos.Util.Modifier          as MM
 
@@ -140,7 +140,9 @@ makeLenses ''GenericToilModifier
 
 -- | Environment used by Toil.
 data ToilEnv = ToilEnv
-    { teMaxTxSize    :: !Byte
-    , teMaxBlockSize :: !Byte
-    , teTxFeePolicy  :: !TxFeePolicy
+    { teMaxTxSize       :: !Byte
+    , teMaxBlockSize    :: !Byte
+    , teTxFeePolicy     :: !TxFeePolicy
+    , teGenStakeholders :: !(HashSet StakeholderId)
+    , teUnlockEpoch     :: !EpochIndex
     }
