@@ -2,7 +2,6 @@
 module Pos.Network.Yaml (
     Topology(..)
   , AllStaticallyKnownPeers(..)
-  , DnsDomains(..)
   , NodeName(..)
   , NodeRegion(..)
   , NodeRoutes(..)
@@ -11,8 +10,6 @@ module Pos.Network.Yaml (
 
 import           Universum
 import           Data.Aeson (FromJSON(..), ToJSON(..), (.:), (.:?), (.=))
-import           Network.Broadcast.OutboundQueue.Types
-import           Pos.Util.Config
 import qualified Data.Aeson            as A
 import qualified Data.Aeson.Types      as A
 import qualified Data.ByteString.Char8 as BS.C8
@@ -20,6 +17,10 @@ import qualified Data.HashMap.Lazy     as HM
 import qualified Data.Map.Strict       as M
 import qualified Data.Text             as T
 import qualified Network.DNS           as DNS
+
+import           Network.Broadcast.OutboundQueue.Types
+import           Pos.Util.Config
+import           Pos.Network.DnsDomains (DnsDomains(..))
 
 -- | Description of the network topology in a Yaml file
 --
@@ -37,20 +38,6 @@ data Topology =
 data AllStaticallyKnownPeers = AllStaticallyKnownPeers {
     allStaticallyKnownPeers :: !(Map NodeName NodeMetadata)
   }
-  deriving (Show)
-
--- | DNS domains for relay discovery
---
--- We provide a list of list of domain names to query. The outer list
--- corresponds to backup DNS servers; the inner lists provide multiple
--- domain names which serve different purposes (e.g., the first might be
--- configured to return geolocated hosts, with the second a load-balancing
--- fall-back). The idea is that querying each of the elements of the inner
--- lists provides a complete set of relay nodes to be tried, using the
--- backup domain names only when one or more of the primary ones fail.
-data DnsDomains = DnsDomains {
-      dnsDomains :: !(Alts (AllOf DNS.Domain))
-    }
   deriving (Show)
 
 newtype NodeName = NodeName Text

@@ -2,9 +2,11 @@ module Pos.Network.Types
     ( NetworkConfig (..)
     , Topology(..)
     , topologyNodeType
+    , resolveDnsDomains
       -- * Re-exports
-      -- ** from .Yaml
+      -- ** from .DnsDomains
     , DnsDomains(..)
+    , DNSError
       -- ** from time-warp
     , NodeType (..)
     , MsgType (..)
@@ -14,9 +16,13 @@ module Pos.Network.Types
     ) where
 
 import           Universum
+import           Data.IP (IPv4)
 import           Network.Broadcast.OutboundQueue.Types
 import           Node.Internal (NodeId (..))
-import           Pos.Network.Yaml (DnsDomains(..))
+import           Pos.Network.DnsDomains (DnsDomains(..), DNSError)
+import           Pos.Util.TimeWarp  (addressToNodeId)
+import qualified Pos.Network.DnsDomains as DnsDomains
+import qualified Data.ByteString.Char8  as BS.C8
 
 -- | Information about the network in which a node participates.
 data NetworkConfig = NetworkConfig
@@ -61,3 +67,14 @@ topologyNodeType (TopologyStatic nodeType _) = nodeType
 topologyNodeType (TopologyBehindNAT _)       = NodeEdge
 topologyNodeType (TopologyP2P)               = NodeEdge
 topologyNodeType (TopologyTransitional)      = NodeCore
+
+-- | Variation on resolveDnsDomains that returns node IDs
+resolveDnsDomains :: NetworkConfig
+                  -> DnsDomains
+                  -> IO (Either [DNSError] [NodeId])
+resolveDnsDomains NetworkConfig{..} dnsDomains =
+    fmap (map ipv4ToNodeId) <$> DnsDomains.resolveDnsDomains dnsDomains
+  where
+    -- | Turn IPv4 address returned by DNS into a NodeId
+    ipv4ToNodeId :: IPv4 -> NodeId
+    ipv4ToNodeId addr = addressToNodeId (BS.C8.pack (show addr), ncDefaultPort)

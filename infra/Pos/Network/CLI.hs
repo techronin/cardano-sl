@@ -11,7 +11,8 @@ import           Universum
 import           Data.IP (IPv4)
 import           Network.Broadcast.OutboundQueue (Alts, peersFromList)
 import           Pos.Network.Types (NodeId)
-import           Pos.Network.Yaml (NodeName(..), DnsDomains(..))
+import           Pos.Network.Yaml (NodeName(..))
+import           Pos.Network.DnsDomains (DnsDomains(..))
 import           Pos.Util.TimeWarp (addressToNodeId)
 import qualified Data.ByteString.Char8      as BS.C8
 import qualified Data.Map.Strict            as M

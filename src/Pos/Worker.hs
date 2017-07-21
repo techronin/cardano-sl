@@ -62,11 +62,9 @@ allWorkers NodeResources {..} = mconcatPair
 
     , case ncTopology ncNetworkConfig of
         TopologyBehindNAT dnsDomains ->
-          wrap' "subscription" $
-            subscriptionWorkers dnsDomains (ncDefaultPort ncNetworkConfig)
+          wrap' "subscription" $ subscriptionWorkers ncNetworkConfig dnsDomains
         _otherwise ->
-          -- No subscription worker required
-          mempty
+          mempty -- No subscription worker required
 
       -- MAGIC "relay" out specs.
       -- There's no cardano-sl worker for them; they're put out by the outbound

@@ -4,36 +4,36 @@ module Pos.Subscription (subscriptionWorkers) where
 
 import           Universum
 
-import           Data.IP                 (IPv4)
 import           Data.Time.Units         (Second, Millisecond, convertUnit)
 import           Data.Time               (UTCTime, NominalDiffTime, getCurrentTime,
                                           diffUTCTime)
 import           Formatting              (sformat, shown, (%))
 import           System.Wlog             (logInfo, logWarning, logError)
 import qualified Data.Map.Strict         as M
-import qualified Data.ByteString.Char8   as BS.C8
 import qualified Network.DNS             as DNS
 
 import           Mockable                (delay, try)
+import           Network.Broadcast.OutboundQueue.Types (NodeType(..), peersFromList)
 import           Pos.Communication       (OutSpecs, WorkerSpec)
+import           Pos.KnownPeers          (MonadKnownPeers(..))
 import           Pos.Ssc.Class           (SscWorkersClass)
 import           Pos.WorkMode.Class      (WorkMode)
 import           Pos.Block.Network.Types (MsgSubscribe (..))
 import           Pos.Communication       (Conversation (..), ConversationActions (..),
                                           convH, toOutSpecs, worker,
                                           NodeId, withConnectionTo, SendActions)
-import           Pos.Network.Types       (DnsDomains(..))
+import           Pos.Network.Types       (NetworkConfig(..), DnsDomains(..),
+                                          resolveDnsDomains)
 import           Pos.Slotting            (getLastKnownSlotDuration)
-import           Pos.Util.TimeWarp       (addressToNodeId)
 
 data KnownRelay = Relay {
       -- | When did we find out about this relay?
       relayDiscovered :: UTCTime
 
-      -- | Was this relay reported last call to getPeers?
+      -- | Was this relay reported last call to findRelays?
     , relayActive :: Bool
 
-      -- | When was the last time it _was_ reported by getPeers?
+      -- | When was the last time it _was_ reported by findRelays?
     , relayLastSeen :: UTCTime
 
       -- | When did we last experience an error communicating with this relay?
@@ -41,6 +41,9 @@ data KnownRelay = Relay {
     }
 
 type KnownRelays = Map NodeId KnownRelay
+
+activeRelays :: KnownRelays -> [NodeId]
+activeRelays = map fst . filter (relayActive . snd) . M.toList
 
 -- | We never expect relays to close the connection
 data RelayClosedConnection = RelayClosedConnection
@@ -50,35 +53,42 @@ instance Exception RelayClosedConnection
 
 subscriptionWorkers
     :: forall ssc ctx m. (WorkMode ssc ctx m, SscWorkersClass ssc)
-    => DnsDomains -> Word16 -> ([WorkerSpec m], OutSpecs)
-subscriptionWorkers dnsDomains defaultPort = first (:[]) <$>
-    worker subscriptionWorkerSpec $ \sendActions -> do
-      resolvSeed <- liftIO $ DNS.makeResolvSeed DNS.defaultResolvConf
-      subscriptionWorker' sendActions dnsDomains defaultPort resolvSeed
+    => NetworkConfig -> DnsDomains -> ([WorkerSpec m], OutSpecs)
+subscriptionWorkers networkCfg dnsDomains = first (:[]) <$>
+    worker subscriptionWorkerSpec $ subscriptionWorker' networkCfg dnsDomains
 
 subscriptionWorkerSpec :: OutSpecs
 subscriptionWorkerSpec = toOutSpecs [ convH (Proxy @MsgSubscribe) (Proxy @Void) ]
 
 subscriptionWorker'
     :: forall ssc ctx m. (WorkMode ssc ctx m)
-    => SendActions m -> DnsDomains -> Word16 -> DNS.ResolvSeed -> m ()
-subscriptionWorker' sendActions (DnsDomains dnsDomains) defaultPort resolvSeed =
+    => NetworkConfig -> DnsDomains -> SendActions m -> m ()
+subscriptionWorker' networkCfg dnsDomains sendActions =
     loop M.empty
   where
     loop :: KnownRelays -> m ()
-    loop relays = do
+    loop oldRelays = do
       slotDur <- getLastKnownSlotDuration
+      now     <- liftIO $ getCurrentTime
+      peers   <- findRelays
+
       let delayInterval :: Millisecond
           delayInterval = max (slotDur `div` 4) (convertUnit (5 :: Second))
 
-      now   <- liftIO $ getCurrentTime
-      peers <- findRelays
-      let relays' = updateKnownRelays now peers relays
+          updatedRelays :: KnownRelays
+          updatedRelays = updateKnownRelays now peers oldRelays
 
-      case preferredRelays now relays' of
+      -- Declare all active relays as a single list of alternative relays
+      -- NOTE: This assumes we are /solely/ responsible for the set of peers.
+      updateKnownPeers $ \_oldPeers ->
+        peersFromList [(NodeRelay, activeRelays updatedRelays)]
+
+      -- Subscribe only to a single relay (if we found one)
+      case preferredRelays now updatedRelays of
         [] -> do
+          logError msgNoRelays
           delay delayInterval
-          loop relays'
+          loop updatedRelays
         (relay:_) -> do
           logInfo $ msgConnectingTo relay
           Left ex <- try $ withConnectionTo sendActions relay $ \_peerData ->
@@ -90,28 +100,15 @@ subscriptionWorker' sendActions (DnsDomains dnsDomains) defaultPort resolvSeed =
           timeOfEx <- liftIO $ getCurrentTime
           loop $ M.adjust (\r -> r { relayException = Just (timeOfEx, ex) })
                           relay
-                          relays'
+                          updatedRelays
 
-    -- | Do DNS lookup to find relay nodes
-    --
-    -- TODO: We don't currently use the DnsDomains correctly.
+    -- Find relays
     findRelays :: m [NodeId]
-    findRelays =
-        go [] (concat dnsDomains)
-      where
-        go :: [DNS.DNSError] -> [DNS.Domain] -> m [NodeId]
-        go errs [] = do
-          logError $ msgDnsFailure errs
-          return []
-        go errs (dom:doms) = do
-          mAddrs <- liftIO $ DNS.withResolver resolvSeed (`DNS.lookupA` dom)
-          case mAddrs of
-            Left  err   -> go (err:errs) doms
-            Right addrs -> return $ map ipv4ToNodeId addrs
-
-    -- | Turn IPv4 address returned by DNS into a NodeId
-    ipv4ToNodeId :: IPv4 -> NodeId
-    ipv4ToNodeId addr = addressToNodeId (BS.C8.pack (show addr), defaultPort)
+    findRelays = do
+        mNodeIds <- liftIO $ resolveDnsDomains networkCfg dnsDomains
+        case mNodeIds of
+          Left errs -> logError (msgDnsFailure errs) >> return []
+          Right ids -> return ids
 
     -- Suitable relays in order of preference
     --
@@ -165,3 +162,6 @@ subscriptionWorker' sendActions (DnsDomains dnsDomains) defaultPort resolvSeed =
 
     msgDnsFailure :: [DNS.DNSError] -> Text
     msgDnsFailure = sformat $ "subscriptionWorker: DNS failure: " % shown
+
+    msgNoRelays :: Text
+    msgNoRelays = sformat $ "subscriptionWorker: no relays found"

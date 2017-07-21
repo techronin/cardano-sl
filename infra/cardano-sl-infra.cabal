@@ -74,6 +74,7 @@ library
                         Pos.Communication.Util
 
                         -- Network topology
+                        Pos.Network.DnsDomains
                         Pos.Network.Types
                         Pos.Network.Yaml
                         Pos.Network.CLI
